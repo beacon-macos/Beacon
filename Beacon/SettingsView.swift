@@ -9,6 +9,20 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        ScrollView {
+            settings
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 560)
+        .frame(maxHeight: maximumHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Color.beaconCanvas(scheme))
+        .background(SettingsWindowFocusView())
+        .preferredColorScheme(model.theme.colorScheme)
+        .animation(.easeInOut(duration: 0.25), value: scheme)
+    }
+
+    private var settings: some View {
         VStack(alignment: .leading, spacing: 20) {
             header
 
@@ -85,6 +99,30 @@ struct SettingsView: View {
                 }
             }
 
+            settingsCard(title: "Clipboard") {
+                settingRow(
+                    title: "Clipboard history",
+                    detail: "Keep the last \(ClipboardHistory.maximumEntryCount) texts you copy on this Mac to find them in the launcher. Passwords that apps mark as private are never saved, and turning this off deletes the history."
+                ) {
+                    VStack(alignment: .trailing, spacing: 6) {
+                        Toggle("Clipboard history", isOn: Bindable(clipboardHistory).isEnabled)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityIdentifier("clipboardHistoryToggle")
+
+                        Button {
+                            clipboardHistory.clear()
+                        } label: {
+                            Label("Clear history", systemImage: "trash")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(clipboardHistory.entries.isEmpty)
+                        .accessibilityIdentifier("clearClipboardHistoryButton")
+                    }
+                }
+            }
+
             settingsCard(title: "Updates") {
                 VStack(alignment: .leading, spacing: 0) {
                     settingRow(
@@ -142,12 +180,12 @@ struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 560, alignment: .top)
-        .background(Color.beaconCanvas(scheme))
-        .background(SettingsWindowFocusView())
-        .preferredColorScheme(model.theme.colorScheme)
-        .animation(.easeInOut(duration: 0.25), value: scheme)
         .accessibilityIdentifier("settingsView")
+    }
+
+    /// Leaves room for the title bar so the window never extends past the screen.
+    private var maximumHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - 80
     }
 
     private var header: some View {
@@ -177,6 +215,10 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
                 .background(Color.beaconSelection(scheme), in: Capsule())
         }
+    }
+
+    private var clipboardHistory: ClipboardHistory {
+        model.clipboardHistory
     }
 
     private var updater: Updater {

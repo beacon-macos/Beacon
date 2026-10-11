@@ -161,6 +161,38 @@ final class BeaconUITests: XCTestCase {
     }
 
     @MainActor
+    func testClipboardHistoryCopiesAnEarlierItem() throws {
+        let app = application(favoriteIDs: [])
+        app.launch()
+
+        let searchField = app.textFields["launcherSearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 2))
+        searchField.click()
+        searchField.typeText("clipboard history")
+        let clipboardHistoryResult = app.buttons["clipboardHistoryResult"]
+        XCTAssertTrue(clipboardHistoryResult.waitForExistence(timeout: 2))
+        searchField.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(app.buttons["clipboardHistoryChip"].waitForExistence(timeout: 2))
+
+        for text in ["Beacon UI test first", "Beacon UI test second"] {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            let entry = app.buttons.matching(identifier: "clipboardEntry")
+                .matching(NSPredicate(format: "label CONTAINS %@", text))
+                .firstMatch
+            XCTAssertTrue(entry.waitForExistence(timeout: 3))
+        }
+
+        searchField.typeKey(.downArrow, modifierFlags: [])
+        searchField.typeKey(.return, modifierFlags: [])
+
+        let copied = expectation(for: NSPredicate { _, _ in
+            NSPasteboard.general.string(forType: .string) == "Beacon UI test first"
+        }, evaluatedWith: nil)
+        wait(for: [copied], timeout: 2)
+    }
+
+    @MainActor
     func testSettingsOpensTheExtensionsPage() throws {
         let app = application(favoriteIDs: ["command:settings"], extensionsDirectory: try fixtureExtensionsDirectory())
         app.launch()
