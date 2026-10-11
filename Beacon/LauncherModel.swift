@@ -71,6 +71,8 @@ enum LauncherTarget: Hashable {
     case extensionCommand(extensionID: String, commandID: String)
     case extensionAction(ExtensionAction)
     case extensionListing(ExtensionManager.Listing)
+    case clipboardHistory
+    case clipboardEntry(ClipboardHistory.Entry)
     case copy(String)
     case reloadExchangeRates
     case checkForUpdates
@@ -110,6 +112,7 @@ struct ExtensionCommandSession {
 final class LauncherModel {
     static let settingsResultID = "command:settings"
     static let extensionsResultID = "command:extensions"
+    static let clipboardHistoryResultID = "command:clipboard-history"
     static let calculationResultID = "command:calculation"
     static let updateResultID = "command:update"
 
@@ -130,12 +133,14 @@ final class LauncherModel {
     private(set) var favoriteIDs: [String]
     private(set) var commandSession: ExtensionCommandSession?
     private(set) var isShowingExtensions = false
+    private(set) var isShowingClipboardHistory = false
     let extensions: ExtensionManager
+    let clipboardHistory: ClipboardHistory
     let exchangeRates: ExchangeRates
     let updater: Updater
 
     var isShowingPage: Bool {
-        commandSession != nil || isShowingExtensions
+        commandSession != nil || isShowingExtensions || isShowingClipboardHistory
     }
 
     var canReorderFavoriteForSelection: Bool {
@@ -184,18 +189,21 @@ final class LauncherModel {
     private var currencyNames: CurrencyNames?
     private var isLoadingCurrencyNames = false
     private var appearanceObservation: NSKeyValueObservation?
+    @ObservationIgnored private var applicationIcons: [String: NSImage] = [:]
     private let defaults: UserDefaults
     private let locale: Locale
 
     init(
         defaults: UserDefaults = .standard,
         extensions: ExtensionManager? = nil,
+        clipboardHistory: ClipboardHistory? = nil,
         exchangeRates: ExchangeRates? = nil,
         updater: Updater? = nil,
         locale: Locale = .autoupdatingCurrent
     ) {
         self.defaults = defaults
         self.extensions = extensions ?? ExtensionManager()
+        self.clipboardHistory = clipboardHistory ?? ClipboardHistory(defaults: defaults)
         self.exchangeRates = exchangeRates ?? ExchangeRates()
         self.updater = updater ?? Updater(defaults: defaults)
         self.locale = locale
@@ -231,6 +239,10 @@ final class LauncherModel {
         }
         self.extensions.onInstalledExtensionsChanged = { [weak self] in
             self?.updateExtensionResults()
+        }
+        self.clipboardHistory.onChange = { [weak self] in
+            guard self?.isShowingClipboardHistory == true else { return }
+            self?.rebuildResults()
         }
         self.exchangeRates.onChange = { [weak self] in
             self?.rebuildResults()
@@ -347,9 +359,13 @@ final class LauncherModel {
                 Task { await extensions.install(listing.id) }
             }
             return
+        case .clipboardHistory:
+            openClipboardHistory()
+            return
+        case .clipboardEntry(let entry):
+            clipboardHistory.copy(entry.text, source: entry.source)
         case .copy(let text):
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            clipboardHistory.copy(text)
         case .reloadExchangeRates:
             exchangeRates.refresh()
             rebuildResults()
@@ -384,6 +400,20 @@ final class LauncherModel {
     func presentExtensions() {
         onPresent?()
         openExtensions()
+    }
+
+    func openClipboardHistory() {
+        closePage()
+        isShowingClipboardHistory = true
+        resetQuery()
+    }
+
+    @discardableResult
+    func removeSelectedClipboardEntry() -> Bool {
+        guard isShowingClipboardHistory, !isSettingsButtonSelected, results.indices.contains(selectedIndex),
+              case .clipboardEntry(let entry) = results[selectedIndex].target else { return false }
+        clipboardHistory.remove(entry)
+        return true
     }
 
     func refreshExtensionCatalog() {
@@ -435,7 +465,7 @@ final class LauncherModel {
         }
     }
 
-    /// Leaves the open extension command or extensions page, or dismisses the launcher when neither is open.
+    /// Leaves the open extension command or launcher page, or dismisses the launcher when none is open.
     func goBack() {
         guard isShowingPage else {
             dismiss()
@@ -456,6 +486,7 @@ final class LauncherModel {
         commandRunID = nil
         commandSession = nil
         isShowingExtensions = false
+        isShowingClipboardHistory = false
     }
 
     private func perform(_ action: ExtensionAction) {
@@ -532,6 +563,11 @@ final class LauncherModel {
         }
         if isShowingExtensions {
             results = Self.ranked(extensionListingResults, query: normalizedQuery)
+            selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
+            return
+        }
+        if isShowingClipboardHistory {
+            results = clipboardHistory.entries(matching: query).map(clipboardResult(for:))
             selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
             return
         }
@@ -707,6 +743,15 @@ final class LauncherModel {
                 target: .extensions
             ),
             LauncherResult(
+                id: Self.clipboardHistoryResultID,
+                title: "Clipboard History",
+                subtitle: "Find and copy text you copied before",
+                symbolName: "doc.on.clipboard.fill",
+                tint: .sand,
+                icon: nil,
+                target: .clipboardHistory
+            ),
+            LauncherResult(
                 id: "command:applications",
                 title: "Applications",
                 subtitle: "Open folder in Finder",
@@ -759,6 +804,30 @@ final class LauncherModel {
             icon: nil,
             target: .update
         )
+    }
+
+    private func clipboardResult(for entry: ClipboardHistory.Entry) -> LauncherResult {
+        let date = entry.date.formatted(.relative(presentation: .named))
+        return LauncherResult(
+            id: "clipboard:\(entry.id.uuidString)",
+            title: ClipboardHistory.preview(of: entry.text),
+            subtitle: entry.source.map { "\($0.name) · \(date)" } ?? date,
+            symbolName: "doc.plaintext",
+            tint: .sand,
+            icon: applicationIcon(bundleIdentifier: entry.source?.bundleIdentifier),
+            target: .clipboardEntry(entry)
+        )
+    }
+
+    private func applicationIcon(bundleIdentifier: String?) -> NSImage? {
+        guard let bundleIdentifier else { return nil }
+        if let icon = applicationIcons[bundleIdentifier] { return icon }
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: applicationURL.path)
+        applicationIcons[bundleIdentifier] = icon
+        return icon
     }
 
     private static let extensionSymbolName = "puzzlepiece.extension.fill"

@@ -84,6 +84,7 @@ Use the scope to name the area of Beacon that changed. Prefer one of the establi
 - `assets`: icons and asset catalog contents
 - `extensions`: the extension runtime, installation, and the extensions page
 - `calculator`: arithmetic and currency conversion results
+- `clipboard`: clipboard history recording, its launcher page, and its settings
 - `updates`: checking for, announcing, and installing new Beacon versions
 - `release`: packaging and release workflow
 

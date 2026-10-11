@@ -47,9 +47,13 @@ struct ContentView: View {
             model.goBack()
         }
         .onKeyPress(.delete, phases: [.down, .repeat]) { keyPress in
-            if keyPress.modifiers.contains(.command), model.isShowingExtensions {
+            if keyPress.modifiers.contains(.command), model.isShowingExtensions || model.isShowingClipboardHistory {
                 if keyPress.phase == .down {
-                    model.uninstallSelectedExtension()
+                    if model.isShowingExtensions {
+                        model.uninstallSelectedExtension()
+                    } else {
+                        model.removeSelectedClipboardEntry()
+                    }
                 }
                 return .handled
             }
@@ -111,6 +115,14 @@ struct ContentView: View {
                     accessibilityLabel: "Extensions. Back to all results",
                     identifier: "extensionsPageChip"
                 )
+            } else if model.isShowingClipboardHistory {
+                pageChip(
+                    title: "Clipboard History",
+                    icon: nil,
+                    symbolName: "doc.on.clipboard.fill",
+                    accessibilityLabel: "Clipboard History. Back to all results",
+                    identifier: "clipboardHistoryChip"
+                )
             }
 
             TextField(searchPlaceholder, text: $model.query)
@@ -127,6 +139,7 @@ struct ContentView: View {
 
     private var searchPlaceholder: String {
         if let session = model.commandSession { return session.placeholder }
+        if model.isShowingClipboardHistory { return "Search clipboard history" }
         return model.isShowingExtensions ? "Search extensions" : "Search apps and commands"
     }
 
@@ -235,6 +248,12 @@ struct ContentView: View {
                         model.refreshExtensionCatalog()
                     }
                 }
+                if model.isShowingClipboardHistory, !model.clipboardHistory.isEnabled {
+                    Button("Turn On Clipboard History") {
+                        model.clipboardHistory.isEnabled = true
+                    }
+                    .accessibilityIdentifier("turnOnClipboardHistoryButton")
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -306,6 +325,13 @@ struct ContentView: View {
                     Label("Navigate", systemImage: "arrow.up.arrow.down")
                 }
                 Label("Back esc", systemImage: "escape")
+            } else if model.isShowingClipboardHistory {
+                if !model.results.isEmpty {
+                    Label(returnActionTitle, systemImage: "return")
+                    Label("Navigate", systemImage: "arrow.up.arrow.down")
+                    Label("Delete ⌘⌫", systemImage: "trash")
+                }
+                Label("Back esc", systemImage: "escape")
             } else {
                 Label(returnActionTitle, systemImage: "return")
                 Label("Navigate", systemImage: "arrow.up.arrow.down")
@@ -337,8 +363,10 @@ struct ContentView: View {
     }
 
     private func resultIdentifier(for result: LauncherResult) -> String {
+        if case .clipboardEntry = result.target { return "clipboardEntry" }
         switch result.id {
         case LauncherModel.settingsResultID: return "openBeaconSettingsResult"
+        case LauncherModel.clipboardHistoryResultID: return "clipboardHistoryResult"
         case LauncherModel.calculationResultID: return "calculationResult"
         case LauncherModel.updateResultID: return "updateResult"
         default: return "launcherResult"
@@ -348,7 +376,7 @@ struct ContentView: View {
     private var returnActionTitle: String {
         guard !model.isSettingsButtonSelected, model.results.indices.contains(model.selectedIndex) else { return "Open" }
         switch model.results[model.selectedIndex].target {
-        case .copy: return "Copy"
+        case .copy, .clipboardEntry: return "Copy"
         case .reloadExchangeRates: return "Try Again"
         case .checkForUpdates: return "Check"
         case .update: return model.updater.canInstallUpdate ? "Update" : "Download"
@@ -397,6 +425,7 @@ struct ContentView: View {
         if model.isShowingExtensions {
             return isExtensionCatalogFailed ? "exclamationmark.triangle" : "puzzlepiece.extension"
         }
+        if model.isShowingClipboardHistory { return "doc.on.clipboard" }
         return model.commandSession == nil ? "star" : "tray"
     }
 
@@ -408,6 +437,10 @@ struct ContentView: View {
                 return "Couldn’t load the extension catalog. \(message)"
             }
             return "No extensions are available yet"
+        }
+        if model.isShowingClipboardHistory {
+            if !model.clipboardHistory.isEnabled { return "Clipboard history is off" }
+            return model.query.isEmpty ? "Text you copy appears here" : "No results for “\(model.query)”"
         }
         if let session = model.commandSession {
             if session.isLoading { return "Loading \(session.extensionName)" }

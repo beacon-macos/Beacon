@@ -19,19 +19,20 @@ The project intentionally has no third-party dependencies.
 ## Important files
 
 - `Beacon/BeaconApp.swift`: application lifecycle, menu-bar entry, and service wiring
-- `Beacon/ContentView.swift`: launcher interface, the extensions page, and keyboard interaction
+- `Beacon/ContentView.swift`: launcher interface, the extensions and clipboard history pages, and keyboard interaction
 - `Beacon/LauncherModel.swift`: indexing, search, selection, commands, and launching
 - `Beacon/LauncherPanelController.swift`: floating AppKit panel behavior
 - `Beacon/KeyboardShortcut.swift`: shortcut representation and global registration
-- `Beacon/SettingsView.swift`: appearance and shortcut settings, and a link to the extensions page
+- `Beacon/SettingsView.swift`: appearance, shortcut, and clipboard history settings, and a link to the extensions page
 - `Beacon/Extension.swift`: extension manifest, catalog, item, and action models
 - `Beacon/ExtensionManager.swift`: installing, updating, and removing extensions from `beacon-macos/extensions`
 - `Beacon/ExtensionRuntime.swift`: JavaScriptCore runtime and host API for extension commands
 - `Beacon/Calculator.swift`: arithmetic evaluation and number formatting for the calculator result
+- `Beacon/ClipboardHistory.swift`: recording copied text, skipping private items, and saving the clipboard history
 - `Beacon/CurrencyConversion.swift`: currency conversion queries and currency names in every language
 - `Beacon/ExchangeRates.swift`: downloading and caching daily exchange rates
 - `Beacon/Updater.swift`: checking GitHub Releases, verifying and installing updates, and relaunching
-- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`, `BeaconTests/CalculatorTests.swift`, `BeaconTests/UpdaterTests.swift`: unit tests using Swift Testing
+- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`, `BeaconTests/CalculatorTests.swift`, `BeaconTests/ClipboardHistoryTests.swift`, `BeaconTests/UpdaterTests.swift`: unit tests using Swift Testing
 - `BeaconUITests/`: UI test target
 - `.github/workflows/build-and-release.yml`: CI builds and automatic releases on merges to `master`
 

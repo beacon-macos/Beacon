@@ -89,6 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         model.loadApplications()
         model.extensions.loadInstalledExtensions()
+        // The unit test host shares the installed Beacon's history file, so it must not record into it.
+        if !Self.isRunningUnitTests {
+            Task { await model.clipboardHistory.start() }
+        }
         applicationIndexTimer = Timer.scheduledTimer(
             withTimeInterval: Self.applicationIndexCheckInterval,
             repeats: true
@@ -161,7 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let extensionsDirectory = environment["BEACON_UI_TEST_EXTENSIONS_DIRECTORY"]
                 .map { URL(filePath: $0, directoryHint: .isDirectory) }
                 ?? FileManager.default.temporaryDirectory.appending(path: "BeaconUITests-\(UUID().uuidString)")
-            return LauncherModel(defaults: defaults, extensions: ExtensionManager(directory: extensionsDirectory))
+            let clipboardHistory = ClipboardHistory(
+                storageURL: FileManager.default.temporaryDirectory
+                    .appending(path: "BeaconUITests-\(UUID().uuidString)/ClipboardHistory.json"),
+                defaults: defaults
+            )
+            return LauncherModel(
+                defaults: defaults,
+                extensions: ExtensionManager(directory: extensionsDirectory),
+                clipboardHistory: clipboardHistory
+            )
         }
 #endif
         return LauncherModel()

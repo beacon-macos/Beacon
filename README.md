@@ -12,6 +12,7 @@ Beacon is a fast, native application launcher for macOS. Open it from anywhere w
 - Case-insensitive, diacritic-insensitive fuzzy matching
 - Quick access to Applications
 - Calculator and currency conversion, such as `2+2` or `2$ in uah`, in any language
+- Clipboard history for the last 100 texts you copied
 - Web search fallback in the default browser
 - Extensions managed from the launcher, such as opening recent Visual Studio Code projects
 - Keyboard navigation with the arrow keys and Return
@@ -97,6 +98,12 @@ Type arithmetic, such as `2+2`, `(1 + 2) * 3^2`, `200 + 15%`, or `sqrt(2)`, and 
 
 Type a currency conversion in any language, such as `2$ in uah`, `100 евро в долларах`, `50 € en dólares`, or `100美元换人民币`, to convert with the latest daily exchange rates. Without a target currency, as in `€20`, Beacon converts to the currency of your region. Exchange rates come from the free [currency-api](https://github.com/fawazahmed0/exchange-api) feed, and the last downloaded rates keep working offline.
 
+## Clipboard history
+
+Beacon remembers the last 100 texts you copy. Search for **Clipboard History** and press `Return` to open it, type to filter the items, and press `Return` to copy the selected one back to the clipboard. Press `⌘⌫` to delete the selected item, and `Esc` to go back. Add **Clipboard History** to your favorites with `⌘K` to open it with a single `Return`.
+
+Beacon skips passwords and other items that apps such as password managers mark as private, and does not record copied files. The history stays on your Mac. Turn it off, or clear it, under **Clipboard** in Beacon Settings; turning it off deletes the saved history.
+
 ## Extensions
 
 Extensions add commands to the launcher. Manage them on the launcher's **Extensions** page: search for **Manage Extensions**, or click **Manage Extensions** in Beacon Settings. Press `Return` to install or update the selected extension, `⌘⌫` to uninstall it, and `Esc` to go back. Beacon downloads extensions from the [beacon-macos/extensions](https://github.com/beacon-macos/extensions) repository, which also documents how to write one.
@@ -123,6 +130,7 @@ xcodebuild test -project Beacon.xcodeproj -scheme Beacon -destination 'platform=
 Beacon/
 ├── BeaconApp.swift                 # App lifecycle and menu-bar entry
 ├── Calculator.swift                # Arithmetic for the calculator result
+├── ClipboardHistory.swift          # Clipboard history recording and storage
 ├── ContentView.swift               # Launcher interface
 ├── CurrencyConversion.swift        # Currency conversion queries and currency names
 ├── ExchangeRates.swift             # Exchange rate downloads and cache
@@ -136,4 +144,4 @@ Beacon/
 └── Updater.swift                   # Update checks, installation, and relaunching
 ```
 
-Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to check for and download Beacon updates and to show and install extensions on the Extensions page, and downloads exchange rates only when you type a currency conversion and the saved rates are over six hours old.
+Beacon indexes application metadata and keeps clipboard history locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to check for and download Beacon updates and to show and install extensions on the Extensions page, and downloads exchange rates only when you type a currency conversion and the saved rates are over six hours old.
