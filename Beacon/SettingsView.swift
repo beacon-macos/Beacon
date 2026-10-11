@@ -85,6 +85,39 @@ struct SettingsView: View {
                 }
             }
 
+            settingsCard(title: "Updates") {
+                VStack(alignment: .leading, spacing: 0) {
+                    settingRow(
+                        title: "Install updates automatically",
+                        detail: "Download new versions from GitHub and relaunch Beacon while you aren’t using it. When this is off, a new version appears as the last result in the launcher."
+                    ) {
+                        Toggle("Install updates automatically", isOn: Bindable(updater).automaticallyInstallsUpdates)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .accessibilityIdentifier("automaticUpdatesToggle")
+                    }
+
+                    Divider().opacity(0.6)
+
+                    settingRow(title: updateStatusTitle, detail: updateStatusDetail) {
+                        if updater.isChecking || [.downloading, .installed].contains(updater.phase) {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else if updater.release != nil {
+                            Button(updater.canInstallUpdate ? "Update Now" : "Download") {
+                                model.installUpdate()
+                            }
+                            .accessibilityIdentifier("installUpdateButton")
+                        } else {
+                            Button("Check Now") {
+                                Task { await updater.checkForUpdates() }
+                            }
+                            .accessibilityIdentifier("checkForUpdatesButton")
+                        }
+                    }
+                }
+            }
+
             settingsCard(title: "Keyboard") {
                 VStack(spacing: 0) {
                     ForEach(Array(keyboardHints.enumerated()), id: \.offset) { index, hint in
@@ -144,6 +177,40 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
                 .background(Color.beaconSelection(scheme), in: Capsule())
         }
+    }
+
+    private var updater: Updater {
+        model.updater
+    }
+
+    private var updateStatusTitle: String {
+        guard let release = updater.release else { return "Check for updates" }
+        return "Beacon \(release.version) is available"
+    }
+
+    private var updateStatusDetail: String {
+        if updater.release != nil {
+            switch updater.phase {
+            case .idle where updater.canInstallUpdate:
+                return "Update now to relaunch Beacon with the new version."
+            case .idle:
+                return "Beacon can’t replace itself where it is installed, so download the new version from GitHub."
+            case .downloading:
+                return "Downloading the update…"
+            case .ready:
+                return "The update is downloaded and installs when Beacon relaunches."
+            case .installed:
+                return "Relaunching Beacon…"
+            case .failed(let message):
+                return "Couldn’t install the update. \(message)"
+            }
+        }
+        if updater.isChecking { return "Checking for a newer version…" }
+        if let message = updater.checkErrorMessage { return "Couldn’t check for updates. \(message)" }
+        if let lastCheckDate = updater.lastCheckDate {
+            return "Beacon is up to date. Last checked \(lastCheckDate.formatted(.relative(presentation: .named)))."
+        }
+        return "Beacon looks for new versions on GitHub every few hours."
     }
 
     private var appVersion: String {

@@ -73,6 +73,8 @@ enum LauncherTarget: Hashable {
     case extensionListing(ExtensionManager.Listing)
     case copy(String)
     case reloadExchangeRates
+    case checkForUpdates
+    case update
 }
 
 /// Compares every property because `@Observable` skips notifying views when `results` is set to an equal value.
@@ -109,6 +111,7 @@ final class LauncherModel {
     static let settingsResultID = "command:settings"
     static let extensionsResultID = "command:extensions"
     static let calculationResultID = "command:calculation"
+    static let updateResultID = "command:update"
 
     var query = "" {
         didSet {
@@ -129,6 +132,7 @@ final class LauncherModel {
     private(set) var isShowingExtensions = false
     let extensions: ExtensionManager
     let exchangeRates: ExchangeRates
+    let updater: Updater
 
     var isShowingPage: Bool {
         commandSession != nil || isShowingExtensions
@@ -187,11 +191,13 @@ final class LauncherModel {
         defaults: UserDefaults = .standard,
         extensions: ExtensionManager? = nil,
         exchangeRates: ExchangeRates? = nil,
+        updater: Updater? = nil,
         locale: Locale = .autoupdatingCurrent
     ) {
         self.defaults = defaults
         self.extensions = extensions ?? ExtensionManager()
         self.exchangeRates = exchangeRates ?? ExchangeRates()
+        self.updater = updater ?? Updater(defaults: defaults)
         self.locale = locale
         if let savedFavoriteIDs = defaults.stringArray(forKey: Keys.favoriteIDs) {
             favoriteIDs = Self.unique(savedFavoriteIDs)
@@ -227,6 +233,9 @@ final class LauncherModel {
             self?.updateExtensionResults()
         }
         self.exchangeRates.onChange = { [weak self] in
+            self?.rebuildResults()
+        }
+        self.updater.onChange = { [weak self] in
             self?.rebuildResults()
         }
         updateExtensionResults()
@@ -345,8 +354,24 @@ final class LauncherModel {
             exchangeRates.refresh()
             rebuildResults()
             return
+        case .checkForUpdates:
+            Task { await updater.checkForUpdates() }
+            return
+        case .update:
+            installUpdate()
+            return
         }
         dismiss()
+    }
+
+    /// Installs the update and relaunches Beacon, or opens the release page when Beacon cannot replace itself.
+    func installUpdate() {
+        if updater.canInstallUpdate {
+            Task { await updater.installUpdate() }
+        } else if let pageURL = updater.release?.pageURL {
+            NSWorkspace.shared.open(pageURL)
+            dismiss()
+        }
     }
 
     func openExtensions() {
@@ -460,7 +485,9 @@ final class LauncherModel {
         guard !isSettingsButtonSelected, !isShowingPage else { return false }
         guard results.indices.contains(selectedIndex) else { return false }
         let result = results[selectedIndex]
-        guard result.id != "command:web-search", result.id != Self.calculationResultID else { return false }
+        guard result.id != "command:web-search",
+              result.id != Self.calculationResultID,
+              result.id != Self.updateResultID else { return false }
 
         if let index = favoriteIDs.firstIndex(of: result.id) {
             favoriteIDs.remove(at: index)
@@ -526,6 +553,9 @@ final class LauncherModel {
         if normalizedQuery.isEmpty {
             let candidatesByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, $0) })
             results = favoriteIDs.compactMap { candidatesByID[$0] }
+            if updater.release != nil {
+                results.append(updateResult())
+            }
         } else {
             results = candidates.compactMap { candidate -> (LauncherResult, Int)? in
                 guard let score = Self.matchScore(query: normalizedQuery, candidate: Self.normalized(candidate.title + " " + candidate.subtitle)) else {
@@ -684,8 +714,51 @@ final class LauncherModel {
                 tint: .sand,
                 icon: nil,
                 target: .url(URL(filePath: "/Applications"))
-            )
+            ),
+            updateResult()
         ]
+    }
+
+    /// Offers the available update, or a command that checks for one.
+    private func updateResult() -> LauncherResult {
+        guard let release = updater.release else {
+            let subtitle = if updater.isChecking {
+                "Checking for a newer version…"
+            } else if updater.checkErrorMessage != nil {
+                "Couldn’t check for updates. Press Return to try again."
+            } else if updater.lastCheckDate != nil {
+                "Beacon \(updater.currentVersion) is the latest version"
+            } else {
+                "Look for a newer version of Beacon"
+            }
+            return LauncherResult(
+                id: Self.updateResultID,
+                title: "Check for Updates",
+                subtitle: subtitle,
+                symbolName: "arrow.trianglehead.2.clockwise",
+                tint: .green,
+                icon: nil,
+                target: .checkForUpdates
+            )
+        }
+
+        let subtitle = switch updater.phase {
+        case .idle where updater.canInstallUpdate: "Press Return to update and relaunch Beacon"
+        case .idle: "Press Return to download it from GitHub"
+        case .downloading: "Downloading the update…"
+        case .ready: "Press Return to relaunch Beacon and finish the update"
+        case .installed: "Relaunching Beacon…"
+        case .failed: "Couldn’t install the update. Press Return to download it from GitHub."
+        }
+        return LauncherResult(
+            id: Self.updateResultID,
+            title: "Beacon \(release.version) is available",
+            subtitle: subtitle,
+            symbolName: "arrow.down.circle.fill",
+            tint: .green,
+            icon: nil,
+            target: .update
+        )
     }
 
     private static let extensionSymbolName = "puzzlepiece.extension.fill"

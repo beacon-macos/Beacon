@@ -340,6 +340,7 @@ struct ContentView: View {
         switch result.id {
         case LauncherModel.settingsResultID: return "openBeaconSettingsResult"
         case LauncherModel.calculationResultID: return "calculationResult"
+        case LauncherModel.updateResultID: return "updateResult"
         default: return "launcherResult"
         }
     }
@@ -349,6 +350,8 @@ struct ContentView: View {
         switch model.results[model.selectedIndex].target {
         case .copy: return "Copy"
         case .reloadExchangeRates: return "Try Again"
+        case .checkForUpdates: return "Check"
+        case .update: return model.updater.canInstallUpdate ? "Update" : "Download"
         default: return "Open"
         }
     }

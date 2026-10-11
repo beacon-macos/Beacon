@@ -39,9 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model: LauncherModel
 
     private static let applicationIndexCheckInterval: TimeInterval = 24 * 60 * 60
+    private static let updateCheckInterval: TimeInterval = 6 * 60 * 60
 
     private var panelController: LauncherPanelController?
     private var applicationIndexTimer: Timer?
+    private var updateCheckTimer: Timer?
     private let hotKeyManager = GlobalHotKeyManager()
     private var isDuplicateInstance = false
 
@@ -65,6 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
 
         panelController = LauncherPanelController(model: model)
+        panelController?.onHide = { [weak self] in
+            self?.installUpdateIfIdle()
+        }
+        model.updater.onUpdatePrepared = { [weak self] in
+            self?.installUpdateIfIdle()
+        }
         model.onPresent = { [weak self] in
             self?.panelController?.show()
         }
@@ -89,11 +97,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.model.checkForNewApplications()
             }
         }
-        showLauncher()
+#if !DEBUG
+        Task { await model.updater.checkForUpdates() }
+        updateCheckTimer = Timer.scheduledTimer(withTimeInterval: Self.updateCheckInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.model.updater.checkForUpdates()
+            }
+        }
+#endif
+        if !CommandLine.arguments.contains(Updater.backgroundRelaunchArgument) {
+            showLauncher()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        installUpdateIfIdle()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
@@ -104,6 +126,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showLauncher() {
         panelController?.toggle()
+    }
+
+    /// Relaunches into an automatically downloaded update only while Beacon is not in use.
+    private func installUpdateIfIdle() {
+        guard model.updater.automaticallyInstallsUpdates,
+              !NSApp.isActive,
+              panelController?.window?.isVisible != true else { return }
+        model.updater.installAndRelaunch(inBackground: true)
     }
 
     private func applyShortcut(_ shortcut: KeyboardShortcut) {
