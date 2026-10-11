@@ -12,7 +12,7 @@ Beacon is a fast, native application launcher for macOS. Open it from anywhere w
 - Case-insensitive, diacritic-insensitive fuzzy matching
 - Quick access to Applications
 - Web search fallback in the default browser
-- Extensions installed from Beacon Settings, such as opening recent Visual Studio Code projects
+- Extensions managed from the launcher, such as opening recent Visual Studio Code projects
 - Keyboard navigation with the arrow keys and Return
 - Configurable shortcut and manual application reindexing
 - Menu-bar operation with no Dock icon
@@ -85,7 +85,7 @@ Open **Beacon Settings** from the launcher or menu-bar item to record a differen
 
 ## Extensions
 
-Extensions add commands to the launcher. Install them from the **Extensions** section of Beacon Settings; Beacon downloads them from the [beacon-macos/extensions](https://github.com/beacon-macos/extensions) repository, which also documents how to write one.
+Extensions add commands to the launcher. Manage them on the launcher's **Extensions** page: search for **Manage Extensions**, or click **Manage Extensions** in Beacon Settings. Press `Return` to install or update the selected extension, `⌘⌫` to uninstall it, and `Esc` to go back. Beacon downloads extensions from the [beacon-macos/extensions](https://github.com/beacon-macos/extensions) repository, which also documents how to write one.
 
 For example, the **Visual Studio Code** extension adds an **Open Recent Project** command. Run it, type to filter your recent projects and workspaces, and press `Return` to open the selected one in Visual Studio Code. Press `Esc` to go back to all results.
 
@@ -118,4 +118,4 @@ Beacon/
 └── SettingsView.swift              # Shortcut and indexing settings
 ```
 
-Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to show and install extensions in Settings.
+Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to show and install extensions on the Extensions page.

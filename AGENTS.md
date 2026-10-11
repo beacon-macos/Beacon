@@ -19,11 +19,11 @@ The project intentionally has no third-party dependencies.
 ## Important files
 
 - `Beacon/BeaconApp.swift`: application lifecycle, menu-bar entry, and service wiring
-- `Beacon/ContentView.swift`: launcher interface and keyboard interaction
+- `Beacon/ContentView.swift`: launcher interface, the extensions page, and keyboard interaction
 - `Beacon/LauncherModel.swift`: indexing, search, selection, commands, and launching
 - `Beacon/LauncherPanelController.swift`: floating AppKit panel behavior
 - `Beacon/KeyboardShortcut.swift`: shortcut representation and global registration
-- `Beacon/SettingsView.swift`: appearance, shortcut, and extension settings
+- `Beacon/SettingsView.swift`: appearance and shortcut settings, and a link to the extensions page
 - `Beacon/Extension.swift`: extension manifest, catalog, item, and action models
 - `Beacon/ExtensionManager.swift`: installing, updating, and removing extensions from `beacon-macos/extensions`
 - `Beacon/ExtensionRuntime.swift`: JavaScriptCore runtime and host API for extension commands

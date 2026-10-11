@@ -22,6 +22,10 @@ struct ContentView: View {
         VStack(spacing: 0) {
             searchBar
             Divider().opacity(0.65)
+            if model.isShowingExtensions {
+                extensionsNotice
+                Divider().opacity(0.65)
+            }
             results
             Divider().opacity(0.65)
             footer
@@ -42,8 +46,14 @@ struct ContentView: View {
         .onExitCommand {
             model.goBack()
         }
-        .onKeyPress(.delete) {
-            guard model.commandSession != nil, model.query.isEmpty else { return .ignored }
+        .onKeyPress(.delete, phases: [.down, .repeat]) { keyPress in
+            if keyPress.modifiers.contains(.command), model.isShowingExtensions {
+                if keyPress.phase == .down {
+                    model.uninstallSelectedExtension()
+                }
+                return .handled
+            }
+            guard model.isShowingPage, model.query.isEmpty else { return .ignored }
             model.goBack()
             return .handled
         }
@@ -86,10 +96,24 @@ struct ContentView: View {
                 .foregroundStyle(Color.beaconInk(scheme))
 
             if let session = model.commandSession {
-                commandChip(session)
+                pageChip(
+                    title: session.title,
+                    icon: session.icon,
+                    symbolName: session.symbolName,
+                    accessibilityLabel: "\(session.title), \(session.extensionName). Back to all results",
+                    identifier: "extensionCommandChip"
+                )
+            } else if model.isShowingExtensions {
+                pageChip(
+                    title: "Extensions",
+                    icon: nil,
+                    symbolName: "puzzlepiece.extension.fill",
+                    accessibilityLabel: "Extensions. Back to all results",
+                    identifier: "extensionsPageChip"
+                )
             }
 
-            TextField(model.commandSession?.placeholder ?? "Search apps and commands", text: $model.query)
+            TextField(searchPlaceholder, text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 22, weight: .medium, design: .rounded))
                 .foregroundStyle(Color.beaconInk(scheme))
@@ -101,21 +125,32 @@ struct ContentView: View {
         .frame(height: 72)
     }
 
-    private func commandChip(_ session: ExtensionCommandSession) -> some View {
+    private var searchPlaceholder: String {
+        if let session = model.commandSession { return session.placeholder }
+        return model.isShowingExtensions ? "Search extensions" : "Search apps and commands"
+    }
+
+    private func pageChip(
+        title: String,
+        icon: NSImage?,
+        symbolName: String,
+        accessibilityLabel: String,
+        identifier: String
+    ) -> some View {
         Button {
             model.goBack()
         } label: {
             HStack(spacing: 6) {
-                if let icon = session.icon {
+                if let icon {
                     Image(nsImage: icon)
                         .resizable()
                         .scaledToFit()
                         .frame(width: 18, height: 18)
                 } else {
-                    Image(systemName: session.symbolName)
+                    Image(systemName: symbolName)
                         .font(.system(size: 12, weight: .semibold))
                 }
-                Text(session.title)
+                Text(title)
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
             }
@@ -128,8 +163,53 @@ struct ContentView: View {
         .buttonStyle(.plain)
         .fixedSize()
         .help("Back to all results")
-        .accessibilityLabel("\(session.title), \(session.extensionName). Back to all results")
-        .accessibilityIdentifier("extensionCommandChip")
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityIdentifier(identifier)
+    }
+
+    private var extensionsNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 4) {
+                Text("Extensions come from")
+                Link(
+                    ExtensionManager.repositoryName,
+                    destination: URL(string: "https://github.com/\(ExtensionManager.repositoryName)")!
+                )
+                Text("and can read your files. Install only extensions you trust.")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Color.beaconMuted(scheme))
+
+            if let errorMessage = extensionsErrorMessage {
+                HStack(spacing: 12) {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.beaconErrorText(scheme))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    if model.extensions.errorMessage == nil {
+                        Button("Try Again") {
+                            model.refreshExtensionCatalog()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+                .padding(10)
+                .background(Color.beaconErrorBackground(scheme))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("extensionsNotice")
+    }
+
+    private var extensionsErrorMessage: String? {
+        if let errorMessage = model.extensions.errorMessage { return errorMessage }
+        guard case .failed(let message) = model.extensions.catalogState, !model.results.isEmpty else { return nil }
+        return "Couldn’t load the extension catalog. \(message)"
     }
 
     @ViewBuilder
@@ -145,10 +225,15 @@ struct ContentView: View {
                     .foregroundStyle(Color.beaconMuted(scheme))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
-                if model.query.isEmpty && !model.isIndexing && model.commandSession == nil {
+                if model.query.isEmpty && !model.isIndexing && !model.isShowingPage {
                     Text("Search for an app or command, then press ⌘K")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.beaconMuted(scheme))
+                }
+                if model.isShowingExtensions, model.query.isEmpty, isExtensionCatalogFailed {
+                    Button("Try Again") {
+                        model.refreshExtensionCatalog()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -157,23 +242,8 @@ struct ContentView: View {
                 ScrollView {
                     LazyVStack(spacing: 4) {
                         ForEach(Array(model.results.enumerated()), id: \.element.id) { index, result in
-                            ResultRow(
-                                result: result,
-                                isSelected: !model.isSettingsButtonSelected && index == model.selectedIndex,
-                                isFavorite: model.isFavorite(result),
-                                scheme: scheme,
-                                onPointerMove: { updateSelectionFromPointer(to: index) },
-                                onRun: {
-                                    model.selectResult(at: index)
-                                    model.runSelected()
-                                }
-                            )
-                            .id(result.id)
-                            .accessibilityIdentifier(
-                                result.id == LauncherModel.settingsResultID
-                                    ? "openBeaconSettingsResult"
-                                    : "launcherResult"
-                            )
+                            resultRow(result, at: index)
+                                .id(result.id)
                         }
                     }
                     .padding(10)
@@ -188,15 +258,67 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder
+    private func resultRow(_ result: LauncherResult, at index: Int) -> some View {
+        let isSelected = !model.isSettingsButtonSelected && index == model.selectedIndex
+        if case .extensionListing(let listing) = result.target {
+            ExtensionListingRow(
+                listing: listing,
+                icon: result.icon,
+                symbolName: result.symbolName,
+                isSelected: isSelected,
+                isBusy: model.extensions.busyExtensionIDs.contains(listing.id),
+                isUpdateAvailable: model.extensions.isUpdateAvailable(for: listing.id),
+                scheme: scheme,
+                onPointerMove: { updateSelectionFromPointer(to: index) },
+                onSelect: { model.selectResult(at: index) },
+                onInstall: { Task { await model.extensions.install(listing.id) } },
+                onUninstall: { model.extensions.uninstall(listing.id) }
+            )
+        } else {
+            ResultRow(
+                result: result,
+                isSelected: isSelected,
+                isFavorite: model.isFavorite(result),
+                scheme: scheme,
+                onPointerMove: { updateSelectionFromPointer(to: index) },
+                onRun: {
+                    model.selectResult(at: index)
+                    model.runSelected()
+                }
+            )
+            .accessibilityIdentifier(
+                result.id == LauncherModel.settingsResultID
+                    ? "openBeaconSettingsResult"
+                    : "launcherResult"
+            )
+        }
+    }
+
     private var footer: some View {
         HStack(spacing: 18) {
-            Label("Open", systemImage: "return")
-            Label("Navigate", systemImage: "arrow.up.arrow.down")
-            if model.commandSession == nil {
-                Label("Favorite ⌘K", systemImage: "star")
-                Text("Hold ⌥ and press ↑↓ to rearrange")
-            } else {
+            if model.isShowingExtensions {
+                if let listing = model.selectedExtensionListing {
+                    if let title = installActionTitle(for: listing) {
+                        Label(title, systemImage: "return")
+                    }
+                    Label("Navigate", systemImage: "arrow.up.arrow.down")
+                    if listing.isInstalled {
+                        Label("Uninstall ⌘⌫", systemImage: "trash")
+                    }
+                } else {
+                    Label("Navigate", systemImage: "arrow.up.arrow.down")
+                }
                 Label("Back esc", systemImage: "escape")
+            } else {
+                Label("Open", systemImage: "return")
+                Label("Navigate", systemImage: "arrow.up.arrow.down")
+                if model.commandSession == nil {
+                    Label("Favorite ⌘K", systemImage: "star")
+                    Text("Hold ⌥ and press ↑↓ to rearrange")
+                } else {
+                    Label("Back esc", systemImage: "escape")
+                }
             }
             Spacer()
             Button {
@@ -234,18 +356,43 @@ struct ContentView: View {
         model.selectResult(at: index)
     }
 
+    private func installActionTitle(for listing: ExtensionManager.Listing) -> String? {
+        if !listing.isInstalled { return "Install" }
+        return model.extensions.isUpdateAvailable(for: listing.id) ? "Update" : nil
+    }
+
+    private var isExtensionCatalogFailed: Bool {
+        if case .failed = model.extensions.catalogState { return true }
+        return false
+    }
+
     private var isLoadingResults: Bool {
-        model.commandSession?.isLoading ?? model.isIndexing
+        if let session = model.commandSession { return session.isLoading }
+        if model.isShowingExtensions {
+            return [.idle, .loading].contains(model.extensions.catalogState)
+        }
+        return model.isIndexing
     }
 
     private var emptyStateSymbol: String {
         if isLoadingResults { return "arrow.trianglehead.2.clockwise.rotate.90" }
         if model.commandSession?.errorMessage != nil { return "exclamationmark.triangle" }
         if !model.query.isEmpty { return "text.magnifyingglass" }
+        if model.isShowingExtensions {
+            return isExtensionCatalogFailed ? "exclamationmark.triangle" : "puzzlepiece.extension"
+        }
         return model.commandSession == nil ? "star" : "tray"
     }
 
     private var emptyStateTitle: String {
+        if model.isShowingExtensions {
+            if isLoadingResults { return "Loading extensions" }
+            if !model.query.isEmpty { return "No results for “\(model.query)”" }
+            if case .failed(let message) = model.extensions.catalogState {
+                return "Couldn’t load the extension catalog. \(message)"
+            }
+            return "No extensions are available yet"
+        }
         if let session = model.commandSession {
             if session.isLoading { return "Loading \(session.extensionName)" }
             if let errorMessage = session.errorMessage { return errorMessage }
@@ -267,7 +414,7 @@ private struct ResultRow: View {
     var body: some View {
         Button(action: onRun) {
             HStack(spacing: 13) {
-                ResultIcon(result: result, scheme: scheme)
+                ResultIcon(icon: result.icon, symbolName: result.symbolName, tint: result.tint, scheme: scheme)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(result.title)
@@ -329,25 +476,107 @@ private struct ResultRow: View {
     }
 }
 
+private struct ExtensionListingRow: View {
+    let listing: ExtensionManager.Listing
+    let icon: NSImage?
+    let symbolName: String
+    let isSelected: Bool
+    let isBusy: Bool
+    let isUpdateAvailable: Bool
+    let scheme: ColorScheme
+    let onPointerMove: () -> Void
+    let onSelect: () -> Void
+    let onInstall: () -> Void
+    let onUninstall: () -> Void
+
+    var body: some View {
+        HStack(spacing: 13) {
+            ResultIcon(icon: icon, symbolName: symbolName, tint: .blue, scheme: scheme)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(listing.name)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.beaconInk(scheme))
+                        .lineLimit(1)
+                    Text(listing.version)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color.beaconMuted(scheme))
+                }
+                Text(listing.description)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(Color.beaconMuted(scheme))
+                    .lineLimit(1)
+                    .help(listing.description)
+            }
+
+            Spacer(minLength: 12)
+
+            if isBusy {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                if listing.isInstalled {
+                    Label("Installed", systemImage: "checkmark")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(Color.beaconMuted(scheme))
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(Color.beaconKeycapBackground(scheme), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.beaconKeycapBorder(scheme)))
+                }
+                if isUpdateAvailable {
+                    Button("Update", action: onInstall)
+                        .accessibilityIdentifier("updateExtensionButton")
+                }
+                if listing.isInstalled {
+                    Button("Uninstall", action: onUninstall)
+                        .accessibilityIdentifier("uninstallExtensionButton")
+                } else {
+                    Button("Install", action: onInstall)
+                        .accessibilityIdentifier("installExtensionButton")
+                }
+            }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .frame(height: 58)
+        .contentShape(Rectangle())
+        .background(isSelected ? Color.beaconSelection(scheme) : .clear)
+        .clipShape(RoundedRectangle(cornerRadius: 9))
+        .onTapGesture(perform: onSelect)
+        .onContinuousHover { phase in
+            if case .active = phase {
+                onPointerMove()
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityIdentifier("extensionListing")
+    }
+}
+
 private struct ResultIcon: View {
-    let result: LauncherResult
+    let icon: NSImage?
+    let symbolName: String
+    let tint: BeaconTint
     let scheme: ColorScheme
 
     var body: some View {
         Group {
-            if let icon = result.icon {
+            if let icon {
                 Image(nsImage: icon)
                     .resizable()
                     .scaledToFit()
                     .padding(4)
             } else {
-                Image(systemName: result.symbolName)
+                Image(systemName: symbolName)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.beaconInk(scheme))
             }
         }
         .frame(width: 38, height: 38)
-        .background(result.icon == nil ? Color.beaconTint(result.tint, scheme) : .clear)
+        .background(icon == nil ? Color.beaconTint(tint, scheme) : .clear)
         .clipShape(RoundedRectangle(cornerRadius: 9))
     }
 }

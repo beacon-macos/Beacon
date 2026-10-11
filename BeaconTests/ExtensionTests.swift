@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SQLite3
 import Testing
 @testable import Beacon
@@ -177,6 +178,96 @@ struct ExtensionTests {
         }
     }
 
+    @Test @MainActor func listingsShowCatalogEntriesThenExtensionsMissingFromTheCatalog() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = root.appending(path: "repository", directoryHint: .isDirectory)
+        try publish(manifest(version: "1.1.0"), script: Self.script, version: "1.1.0", to: repository)
+        let directory = root.appending(path: "installed", directoryHint: .isDirectory)
+        try write(manifest(), script: Self.script, to: directory.appending(path: "test", directoryHint: .isDirectory))
+        try write(manifest(id: "other"), script: Self.script, to: directory.appending(path: "other", directoryHint: .isDirectory))
+
+        let manager = ExtensionManager(directory: directory, repositoryURL: repository)
+        manager.loadInstalledExtensions()
+        await manager.refreshCatalog()
+
+        #expect(manager.listings.map(\.id) == ["test", "other"])
+        #expect(manager.listings.map(\.version) == ["1.0.0", "1.0.0"])
+        #expect(manager.listings.map(\.isInstalled) == [true, true])
+        #expect(manager.isUpdateAvailable(for: "test"))
+    }
+
+    @Test @MainActor func extensionsPageInstallsUpdatesAndUninstallsTheSelectedExtension() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = root.appending(path: "repository", directoryHint: .isDirectory)
+        try publish(manifest(), script: Self.script, version: "1.0.0", to: repository)
+        let manager = ExtensionManager(directory: root.appending(path: "installed"), repositoryURL: repository)
+        let model = LauncherModel(defaults: isolatedDefaults(named: #function), extensions: manager)
+        var dismissalCount = 0
+        model.onDismiss = { dismissalCount += 1 }
+
+        model.query = "manage extensions"
+        try #require(model.results.first?.id == LauncherModel.extensionsResultID)
+        model.runSelected()
+        #expect(model.isShowingExtensions)
+        #expect(model.query.isEmpty)
+        try await waitUntil { !model.results.isEmpty }
+
+        #expect(model.results.map(\.title) == ["Test Extension"])
+        #expect(model.selectedExtensionListing?.isInstalled == false)
+        #expect(!model.toggleFavoriteForSelection())
+        #expect(!model.canReorderFavoriteForSelection)
+        #expect(!model.uninstallSelectedExtension())
+
+        var resultsChange = observeChange(of: model)
+        model.runSelected()
+        try await waitUntil { model.selectedExtensionListing?.isInstalled == true }
+        #expect(manager.installed.map(\.id) == ["test"])
+        #expect(resultsChange.didChange)
+
+        try publish(manifest(version: "1.1.0"), script: Self.script, version: "1.1.0", to: repository)
+        model.refreshExtensionCatalog()
+        try await waitUntil { manager.isUpdateAvailable(for: "test") }
+        resultsChange = observeChange(of: model)
+        model.runSelected()
+        try await waitUntil { model.selectedExtensionListing?.version == "1.1.0" }
+        #expect(!manager.isUpdateAvailable(for: "test"))
+        #expect(resultsChange.didChange)
+
+        #expect(model.uninstallSelectedExtension())
+        #expect(manager.installed.isEmpty)
+        #expect(model.selectedExtensionListing?.isInstalled == false)
+
+        model.goBack()
+        #expect(!model.isShowingExtensions)
+        #expect(dismissalCount == 0)
+        #expect(model.results.first?.id == LauncherModel.settingsResultID)
+
+        model.goBack()
+        #expect(dismissalCount == 1)
+    }
+
+    @Test @MainActor func presentingTheLauncherClosesTheExtensionsPage() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = try installedManager(in: root)
+        let model = LauncherModel(defaults: isolatedDefaults(named: #function), extensions: manager)
+        var presentationCount = 0
+        model.onPresent = {
+            presentationCount += 1
+            model.prepareForPresentation()
+        }
+
+        model.presentExtensions()
+        #expect(presentationCount == 1)
+        #expect(model.isShowingExtensions)
+        #expect(model.results.map(\.title) == ["Test Extension"])
+
+        model.prepareForPresentation()
+        #expect(!model.isShowingExtensions)
+    }
+
     @Test @MainActor func extensionCommandShowsSearchableItemsAndReturnsToResults() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -299,10 +390,26 @@ struct ExtensionTests {
 
     @MainActor
     private func waitUntilLoaded(_ model: LauncherModel) async throws {
-        for _ in 0..<500 where model.commandSession?.isLoading == true {
+        try await waitUntil { model.commandSession?.isLoading == false }
+    }
+
+    @MainActor
+    private func observeChange(of model: LauncherModel) -> ChangeFlag {
+        let flag = ChangeFlag()
+        withObservationTracking {
+            _ = model.results
+        } onChange: {
+            MainActor.assumeIsolated { flag.didChange = true }
+        }
+        return flag
+    }
+
+    @MainActor
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<500 where !condition() {
             try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(model.commandSession?.isLoading == false)
+        #expect(condition())
     }
 
     private func temporaryDirectory() throws -> URL {
@@ -332,4 +439,9 @@ struct ExtensionTests {
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
     }
+}
+
+@MainActor
+private final class ChangeFlag {
+    var didChange = false
 }

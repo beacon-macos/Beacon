@@ -15,6 +15,15 @@ final class ExtensionManager {
         case failed(String)
     }
 
+    struct Listing: Hashable, Identifiable {
+        let id: String
+        let name: String
+        let description: String
+        let version: String
+        let icon: ExtensionIcon?
+        let isInstalled: Bool
+    }
+
     nonisolated static let repositoryName = "beacon-macos/extensions"
     nonisolated static let repositoryURL = URL(string: "https://raw.githubusercontent.com/\(repositoryName)/main/")!
 
@@ -52,6 +61,35 @@ final class ExtensionManager {
         guard let installedVersion = installedExtension(withID: id)?.manifest.version,
               let catalogVersion = catalog.first(where: { $0.id == id })?.version else { return false }
         return catalogVersion.isNewerVersion(than: installedVersion)
+    }
+
+    var listings: [Listing] {
+        let catalogListings = catalog.map { entry in
+            let manifest = installedExtension(withID: entry.id)?.manifest
+            return Listing(
+                id: entry.id,
+                name: manifest?.name ?? entry.name,
+                description: manifest?.description ?? entry.description,
+                version: manifest?.version ?? entry.version,
+                icon: manifest?.icon ?? entry.icon,
+                isInstalled: manifest != nil
+            )
+        }
+        let catalogIDs = Set(catalog.map(\.id))
+        let installedOnlyListings = installed
+            .filter { !catalogIDs.contains($0.id) }
+            .map { installedExtension in
+                let manifest = installedExtension.manifest
+                return Listing(
+                    id: manifest.id,
+                    name: manifest.name,
+                    description: manifest.description,
+                    version: manifest.version,
+                    icon: manifest.icon,
+                    isInstalled: true
+                )
+            }
+        return catalogListings + installedOnlyListings
     }
 
     func loadInstalledExtensions() {
