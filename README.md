@@ -16,6 +16,7 @@ Beacon is a fast, native application launcher for macOS. Open it from anywhere w
 - Extensions managed from the launcher, such as opening recent Visual Studio Code projects
 - Keyboard navigation with the arrow keys and Return
 - Configurable shortcut and manual application reindexing
+- Update notices in the launcher, or automatic updates from GitHub Releases
 - Menu-bar operation with no Dock icon
 
 ## Requirements
@@ -75,6 +76,12 @@ git push origin v1.2.1
 
 The PKG provides a guided installer, while the ZIP contains the standalone application. The packages are ad-hoc signed because the project does not use a paid Apple Developer account, so the first-launch security confirmation is unavoidable. Developer ID signing and notarization can be added later without changing the release process.
 
+## Updates
+
+Beacon checks the [latest GitHub Release](https://github.com/beacon-macos/Beacon/releases/latest) when it starts and every six hours. When a newer version is out, it appears as the last result in the launcher. Press `Return` on it to download the update, verify it, and relaunch Beacon with the new version. Search for **Check for Updates** to check right away.
+
+Turn on **Install updates automatically** in Beacon Settings to download new versions in the background and relaunch Beacon while you are not using it. Beacon can replace itself only when it can write to its own application folder. Otherwise, such as after installing with the PKG, the update result opens the release page so you can download the new version yourself.
+
 ## Usage
 
 1. Press `⌥ Space` to show or hide Beacon.
@@ -125,7 +132,8 @@ Beacon/
 ├── KeyboardShortcut.swift          # Shortcut representation and registration
 ├── LauncherModel.swift             # Indexing, matching, and launch behavior
 ├── LauncherPanelController.swift   # Floating launcher panel
-└── SettingsView.swift              # Shortcut and indexing settings
+├── SettingsView.swift              # Shortcut and indexing settings
+└── Updater.swift                   # Update checks, installation, and relaunching
 ```
 
-Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to show and install extensions on the Extensions page, and downloads exchange rates only when you type a currency conversion and the saved rates are over six hours old.
+Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to check for and download Beacon updates and to show and install extensions on the Extensions page, and downloads exchange rates only when you type a currency conversion and the saved rates are over six hours old.

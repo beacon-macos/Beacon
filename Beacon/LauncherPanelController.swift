@@ -9,6 +9,8 @@ extension Notification.Name {
 final class LauncherPanelController: NSWindowController, NSWindowDelegate {
     private let model: LauncherModel
 
+    var onHide: (() -> Void)?
+
     init(model: LauncherModel) {
         self.model = model
 
@@ -66,6 +68,7 @@ final class LauncherPanelController: NSWindowController, NSWindowDelegate {
 
     func hide() {
         window?.orderOut(nil)
+        onHide?()
     }
 
     func windowDidResignKey(_ notification: Notification) {

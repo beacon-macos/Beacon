@@ -30,7 +30,8 @@ The project intentionally has no third-party dependencies.
 - `Beacon/Calculator.swift`: arithmetic evaluation and number formatting for the calculator result
 - `Beacon/CurrencyConversion.swift`: currency conversion queries and currency names in every language
 - `Beacon/ExchangeRates.swift`: downloading and caching daily exchange rates
-- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`, `BeaconTests/CalculatorTests.swift`: unit tests using Swift Testing
+- `Beacon/Updater.swift`: checking GitHub Releases, verifying and installing updates, and relaunching
+- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`, `BeaconTests/CalculatorTests.swift`, `BeaconTests/UpdaterTests.swift`: unit tests using Swift Testing
 - `BeaconUITests/`: UI test target
 - `.github/workflows/build-and-release.yml`: CI builds and automatic releases on merges to `master`
 
