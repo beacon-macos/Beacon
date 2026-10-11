@@ -73,6 +73,10 @@ struct SettingsView: View {
                 }
             }
 
+            settingsCard(title: "Extensions") {
+                ExtensionSettings(manager: model.extensions, scheme: scheme)
+            }
+
             settingsCard(title: "Keyboard") {
                 VStack(spacing: 0) {
                     ForEach(Array(keyboardHints.enumerated()), id: \.offset) { index, hint in
@@ -144,7 +148,7 @@ struct SettingsView: View {
             ("Move selection", ["↑", "↓"]),
             ("Add or remove favorite", ["⌘", "K"]),
             ("Rearrange favorites", ["⌥", "↑", "↓"]),
-            ("Close Beacon", ["esc"])
+            ("Go back or close Beacon", ["esc"])
         ]
     }
 
@@ -190,6 +194,197 @@ struct SettingsView: View {
             content()
         }
         .padding(16)
+    }
+}
+
+private struct ExtensionSettings: View {
+    let manager: ExtensionManager
+    let scheme: ColorScheme
+
+    private struct Row: Identifiable {
+        let id: String
+        let name: String
+        let description: String
+        let version: String
+        let icon: ExtensionIcon?
+        let isInstalled: Bool
+    }
+
+    private var rows: [Row] {
+        let catalogRows = manager.catalog.map { entry in
+            let manifest = manager.installedExtension(withID: entry.id)?.manifest
+            return Row(
+                id: entry.id,
+                name: manifest?.name ?? entry.name,
+                description: manifest?.description ?? entry.description,
+                version: manifest?.version ?? entry.version,
+                icon: manifest?.icon ?? entry.icon,
+                isInstalled: manifest != nil
+            )
+        }
+        let catalogIDs = Set(manager.catalog.map(\.id))
+        let installedOnlyRows = manager.installed
+            .filter { !catalogIDs.contains($0.id) }
+            .map { installedExtension in
+                let manifest = installedExtension.manifest
+                return Row(
+                    id: manifest.id,
+                    name: manifest.name,
+                    description: manifest.description,
+                    version: manifest.version,
+                    icon: manifest.icon,
+                    isInstalled: true
+                )
+            }
+        return catalogRows + installedOnlyRows
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            let rows = self.rows
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                if index > 0 {
+                    Divider().opacity(0.6)
+                }
+                extensionRow(row)
+            }
+
+            if rows.isEmpty || isCatalogFailed {
+                catalogStatus
+                    .padding(16)
+            }
+
+            if let errorMessage = manager.errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.beaconErrorText(scheme))
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.beaconErrorBackground(scheme))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding([.horizontal, .bottom], 16)
+            }
+
+            Divider().opacity(0.6)
+
+            HStack(spacing: 4) {
+                Text("Extensions come from")
+                Link(
+                    ExtensionManager.repositoryName,
+                    destination: URL(string: "https://github.com/\(ExtensionManager.repositoryName)")!
+                )
+                Text("and can read your files.")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Color.beaconMuted(scheme))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .task {
+            await manager.refreshCatalog()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("extensionSettings")
+    }
+
+    private var isCatalogFailed: Bool {
+        if case .failed = manager.catalogState { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var catalogStatus: some View {
+        switch manager.catalogState {
+        case .idle, .loading:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Loading extensions…")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(Color.beaconMuted(scheme))
+        case .failed(let message):
+            HStack(spacing: 12) {
+                Text("Couldn’t load the extension catalog. \(message)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.beaconMuted(scheme))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button("Try Again") {
+                    Task { await manager.refreshCatalog() }
+                }
+                .controlSize(.small)
+            }
+        case .loaded:
+            Text("No extensions are available yet.")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.beaconMuted(scheme))
+        }
+    }
+
+    private func extensionRow(_ row: Row) -> some View {
+        HStack(spacing: 12) {
+            extensionIcon(row.icon)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(row.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.beaconInk(scheme))
+                    Text(row.version)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.beaconMuted(scheme))
+                }
+                Text(row.description)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Color.beaconMuted(scheme))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if manager.busyExtensionIDs.contains(row.id) {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                if manager.isUpdateAvailable(for: row.id) {
+                    Button("Update") {
+                        Task { await manager.install(row.id) }
+                    }
+                    .accessibilityIdentifier("updateExtensionButton")
+                }
+                if row.isInstalled {
+                    Button("Uninstall") {
+                        manager.uninstall(row.id)
+                    }
+                    .accessibilityIdentifier("uninstallExtensionButton")
+                } else {
+                    Button("Install") {
+                        Task { await manager.install(row.id) }
+                    }
+                    .accessibilityIdentifier("installExtensionButton")
+                }
+            }
+        }
+        .controlSize(.small)
+        .padding(16)
+    }
+
+    private func extensionIcon(_ icon: ExtensionIcon?) -> some View {
+        Group {
+            if let image = LauncherModel.image(for: icon) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: icon?.symbol ?? "puzzlepiece.extension.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.beaconInk(scheme))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.beaconTint(.blue, scheme))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .frame(width: 32, height: 32)
     }
 }
 

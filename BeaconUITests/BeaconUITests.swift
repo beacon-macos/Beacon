@@ -108,10 +108,69 @@ final class BeaconUITests: XCTestCase {
         XCTAssertLessThan(applicationsResult.frame.minY, settingsResult.frame.minY)
     }
 
-    private func application(favoriteIDs: [String]) -> XCUIApplication {
+    @MainActor
+    func testReturnRunsTheResultSelectedWithArrowKeys() throws {
+        let app = application(favoriteIDs: [], extensionsDirectory: try fixtureExtensionsDirectory())
+        app.launch()
+
+        let searchField = app.textFields["launcherSearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 2))
+        searchField.click()
+        searchField.typeText("zebra fixture")
+        XCTAssertTrue(app.buttons.matching(identifier: "launcherResult").element(boundBy: 1).waitForExistence(timeout: 2))
+
+        searchField.typeKey(.downArrow, modifierFlags: [])
+        searchField.typeKey(.return, modifierFlags: [])
+
+        let chip = app.buttons["extensionCommandChip"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 2))
+        XCTAssertTrue(chip.label.hasPrefix("Zebra Fixture Beta"))
+        let betaItem = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "Beta item"))
+            .firstMatch
+        XCTAssertTrue(betaItem.waitForExistence(timeout: 2))
+
+        searchField.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(searchField.exists)
+    }
+
+    private func application(favoriteIDs: [String], extensionsDirectory: URL? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["BEACON_UI_TESTING"] = "1"
         app.launchEnvironment["BEACON_UI_TEST_FAVORITE_IDS"] = favoriteIDs.joined(separator: "\n")
+        if let extensionsDirectory {
+            app.launchEnvironment["BEACON_UI_TEST_EXTENSIONS_DIRECTORY"] = extensionsDirectory.path
+        }
         return app
+    }
+
+    /// Installs an extension with two commands whose items never open anything.
+    private func fixtureExtensionsDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "BeaconUITests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let extensionDirectory = directory.appending(path: "fixture", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: extensionDirectory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+
+        let manifest = """
+            {
+              "id": "fixture", "name": "Fixture", "description": "UI test fixture", "version": "1.0.0",
+              "main": "main.js",
+              "commands": [
+                { "id": "alpha", "title": "Zebra Fixture Alpha" },
+                { "id": "beta", "title": "Zebra Fixture Beta" }
+              ]
+            }
+            """
+        let script = """
+            for (const name of ["alpha", "beta"]) {
+              const title = name[0].toUpperCase() + name.slice(1) + " item";
+              beacon.registerCommand(name, () => [{ title, action: { type: "open", target: "beacon-ui-test://" + name } }]);
+            }
+            """
+        try manifest.write(to: extensionDirectory.appending(path: "manifest.json"), atomically: true, encoding: .utf8)
+        try script.write(to: extensionDirectory.appending(path: "main.js"), atomically: true, encoding: .utf8)
+        return directory
     }
 }

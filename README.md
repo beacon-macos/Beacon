@@ -13,6 +13,7 @@ Beacon is a fast, native application launcher for macOS. Open it from anywhere w
 - Case-insensitive, diacritic-insensitive fuzzy matching
 - Quick access to Applications
 - Web search fallback in the default browser
+- Extensions installed from Beacon Settings, such as opening recent Visual Studio Code projects
 - Keyboard navigation with the arrow keys and Return
 - Configurable shortcut and manual application reindexing
 - Menu-bar operation with no Dock icon
@@ -83,6 +84,14 @@ The PKG provides a guided installer, while the ZIP contains the standalone appli
 
 Open **Beacon Settings** from the launcher or menu-bar item to record a different global shortcut or rebuild the application index.
 
+## Extensions
+
+Extensions add commands to the launcher. Install them from the **Extensions** section of Beacon Settings; Beacon downloads them from the [beacon-macos/extensions](https://github.com/beacon-macos/extensions) repository, which also documents how to write one.
+
+For example, the **Visual Studio Code** extension adds an **Open Recent Project** command. Run it, type to filter your recent projects and workspaces, and press `Return` to open the selected one in Visual Studio Code. Press `Esc` to go back to all results.
+
+Extensions are JavaScript files that Beacon runs with access to your files, so install only extensions you trust.
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing instructions, and pull request guidelines.
@@ -101,10 +110,13 @@ xcodebuild test -project Beacon.xcodeproj -scheme Beacon -destination 'platform=
 Beacon/
 ├── BeaconApp.swift                 # App lifecycle and menu-bar entry
 ├── ContentView.swift               # Launcher interface
+├── Extension.swift                 # Extension manifest, catalog, and item models
+├── ExtensionManager.swift          # Extension installation and updates
+├── ExtensionRuntime.swift          # JavaScriptCore runtime for extension commands
 ├── KeyboardShortcut.swift          # Shortcut representation and registration
 ├── LauncherModel.swift             # Indexing, matching, and launch behavior
 ├── LauncherPanelController.swift   # Floating launcher panel
 └── SettingsView.swift              # Shortcut and indexing settings
 ```
 
-Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it.
+Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to show and install extensions in Settings.

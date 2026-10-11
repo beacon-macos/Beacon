@@ -77,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         model.loadApplications()
+        model.extensions.loadInstalledExtensions()
         applicationIndexTimer = Timer.scheduledTimer(
             withTimeInterval: Self.applicationIndexCheckInterval,
             repeats: true
@@ -124,7 +125,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     forKey: "launcherFavoriteIDs"
                 )
             }
-            return LauncherModel(defaults: defaults)
+            let extensionsDirectory = environment["BEACON_UI_TEST_EXTENSIONS_DIRECTORY"]
+                .map { URL(filePath: $0, directoryHint: .isDirectory) }
+                ?? FileManager.default.temporaryDirectory.appending(path: "BeaconUITests-\(UUID().uuidString)")
+            return LauncherModel(defaults: defaults, extensions: ExtensionManager(directory: extensionsDirectory))
         }
 #endif
         return LauncherModel()
