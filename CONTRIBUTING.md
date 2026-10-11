@@ -83,6 +83,7 @@ Use the scope to name the area of Beacon that changed. Prefer one of the establi
 - `theme`: appearance and styling
 - `assets`: icons and asset catalog contents
 - `extensions`: the extension runtime, installation, and the extensions page
+- `calculator`: arithmetic and currency conversion results
 - `release`: packaging and release workflow
 
 Omit the scope when a change is genuinely repository-wide, and add a new scope only when no existing one fits.

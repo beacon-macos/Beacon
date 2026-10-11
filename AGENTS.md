@@ -27,7 +27,10 @@ The project intentionally has no third-party dependencies.
 - `Beacon/Extension.swift`: extension manifest, catalog, item, and action models
 - `Beacon/ExtensionManager.swift`: installing, updating, and removing extensions from `beacon-macos/extensions`
 - `Beacon/ExtensionRuntime.swift`: JavaScriptCore runtime and host API for extension commands
-- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`: unit tests using Swift Testing
+- `Beacon/Calculator.swift`: arithmetic evaluation and number formatting for the calculator result
+- `Beacon/CurrencyConversion.swift`: currency conversion queries and currency names in every language
+- `Beacon/ExchangeRates.swift`: downloading and caching daily exchange rates
+- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`, `BeaconTests/CalculatorTests.swift`: unit tests using Swift Testing
 - `BeaconUITests/`: UI test target
 - `.github/workflows/build-and-release.yml`: CI builds and automatic releases on merges to `master`
 

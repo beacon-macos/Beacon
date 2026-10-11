@@ -287,11 +287,7 @@ struct ContentView: View {
                     model.runSelected()
                 }
             )
-            .accessibilityIdentifier(
-                result.id == LauncherModel.settingsResultID
-                    ? "openBeaconSettingsResult"
-                    : "launcherResult"
-            )
+            .accessibilityIdentifier(resultIdentifier(for: result))
         }
     }
 
@@ -311,7 +307,7 @@ struct ContentView: View {
                 }
                 Label("Back esc", systemImage: "escape")
             } else {
-                Label("Open", systemImage: "return")
+                Label(returnActionTitle, systemImage: "return")
                 Label("Navigate", systemImage: "arrow.up.arrow.down")
                 if model.commandSession == nil {
                     Label("Favorite ⌘K", systemImage: "star")
@@ -338,6 +334,23 @@ struct ContentView: View {
         .foregroundStyle(Color.beaconMuted(scheme))
         .padding(.horizontal, 18)
         .frame(height: 38)
+    }
+
+    private func resultIdentifier(for result: LauncherResult) -> String {
+        switch result.id {
+        case LauncherModel.settingsResultID: return "openBeaconSettingsResult"
+        case LauncherModel.calculationResultID: return "calculationResult"
+        default: return "launcherResult"
+        }
+    }
+
+    private var returnActionTitle: String {
+        guard !model.isSettingsButtonSelected, model.results.indices.contains(model.selectedIndex) else { return "Open" }
+        switch model.results[model.selectedIndex].target {
+        case .copy: return "Copy"
+        case .reloadExchangeRates: return "Try Again"
+        default: return "Open"
+        }
     }
 
     private func focusSearch() async {

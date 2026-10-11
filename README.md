@@ -11,6 +11,7 @@ Beacon is a fast, native application launcher for macOS. Open it from anywhere w
 - Search across system and user Applications folders
 - Case-insensitive, diacritic-insensitive fuzzy matching
 - Quick access to Applications
+- Calculator and currency conversion, such as `2+2` or `2$ in uah`, in any language
 - Web search fallback in the default browser
 - Extensions managed from the launcher, such as opening recent Visual Studio Code projects
 - Keyboard navigation with the arrow keys and Return
@@ -83,6 +84,12 @@ The PKG provides a guided installer, while the ZIP contains the standalone appli
 
 Open **Beacon Settings** from the launcher or menu-bar item to record a different global shortcut or rebuild the application index.
 
+## Calculator
+
+Type arithmetic, such as `2+2`, `(1 + 2) * 3^2`, `200 + 15%`, or `sqrt(2)`, and the first result shows the answer: **2+2 = 4**. Press `Return` to copy it.
+
+Type a currency conversion in any language, such as `2$ in uah`, `100 евро в долларах`, `50 € en dólares`, or `100美元换人民币`, to convert with the latest daily exchange rates. Without a target currency, as in `€20`, Beacon converts to the currency of your region. Exchange rates come from the free [currency-api](https://github.com/fawazahmed0/exchange-api) feed, and the last downloaded rates keep working offline.
+
 ## Extensions
 
 Extensions add commands to the launcher. Manage them on the launcher's **Extensions** page: search for **Manage Extensions**, or click **Manage Extensions** in Beacon Settings. Press `Return` to install or update the selected extension, `⌘⌫` to uninstall it, and `Esc` to go back. Beacon downloads extensions from the [beacon-macos/extensions](https://github.com/beacon-macos/extensions) repository, which also documents how to write one.
@@ -108,7 +115,10 @@ xcodebuild test -project Beacon.xcodeproj -scheme Beacon -destination 'platform=
 ```text
 Beacon/
 ├── BeaconApp.swift                 # App lifecycle and menu-bar entry
+├── Calculator.swift                # Arithmetic for the calculator result
 ├── ContentView.swift               # Launcher interface
+├── CurrencyConversion.swift        # Currency conversion queries and currency names
+├── ExchangeRates.swift             # Exchange rate downloads and cache
 ├── Extension.swift                 # Extension manifest, catalog, and item models
 ├── ExtensionManager.swift          # Extension installation and updates
 ├── ExtensionRuntime.swift          # JavaScriptCore runtime for extension commands
@@ -118,4 +128,4 @@ Beacon/
 └── SettingsView.swift              # Shortcut and indexing settings
 ```
 
-Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to show and install extensions on the Extensions page.
+Beacon indexes application metadata locally. A web-search result opens Google in your default browser only when you choose it. Beacon contacts GitHub only to show and install extensions on the Extensions page, and downloads exchange rates only when you type a currency conversion and the saved rates are over six hours old.
