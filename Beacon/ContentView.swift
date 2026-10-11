@@ -40,7 +40,12 @@ struct ContentView: View {
             Task { await focusSearch() }
         }
         .onExitCommand {
-            model.dismiss()
+            model.goBack()
+        }
+        .onKeyPress(.delete) {
+            guard model.commandSession != nil, model.query.isEmpty else { return .ignored }
+            model.goBack()
+            return .handled
         }
         .onKeyPress(.upArrow, phases: [.down, .repeat]) { keyPress in
             if keyPress.modifiers.contains(.option), model.canReorderFavoriteForSelection {
@@ -80,7 +85,11 @@ struct ContentView: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Color.beaconInk(scheme))
 
-            TextField("Search apps and commands", text: $model.query)
+            if let session = model.commandSession {
+                commandChip(session)
+            }
+
+            TextField(model.commandSession?.placeholder ?? "Search apps and commands", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 22, weight: .medium, design: .rounded))
                 .foregroundStyle(Color.beaconInk(scheme))
@@ -92,6 +101,37 @@ struct ContentView: View {
         .frame(height: 72)
     }
 
+    private func commandChip(_ session: ExtensionCommandSession) -> some View {
+        Button {
+            model.goBack()
+        } label: {
+            HStack(spacing: 6) {
+                if let icon = session.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                } else {
+                    Image(systemName: session.symbolName)
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                Text(session.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Color.beaconInk(scheme))
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(Color.beaconSelection(scheme))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Back to all results")
+        .accessibilityLabel("\(session.title), \(session.extensionName). Back to all results")
+        .accessibilityIdentifier("extensionCommandChip")
+    }
+
     @ViewBuilder
     private var results: some View {
         if model.results.isEmpty {
@@ -99,11 +139,13 @@ struct ContentView: View {
                 Image(systemName: emptyStateSymbol)
                     .font(.system(size: 26, weight: .medium))
                     .foregroundStyle(Color.beaconMuted(scheme))
-                    .symbolEffect(.rotate, isActive: model.isIndexing)
+                    .symbolEffect(.rotate, isActive: isLoadingResults)
                 Text(emptyStateTitle)
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(Color.beaconMuted(scheme))
-                if model.query.isEmpty && !model.isIndexing {
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                if model.query.isEmpty && !model.isIndexing && model.commandSession == nil {
                     Text("Search for an app or command, then press ⌘K")
                         .font(.system(size: 12))
                         .foregroundStyle(Color.beaconMuted(scheme))
@@ -150,8 +192,12 @@ struct ContentView: View {
         HStack(spacing: 18) {
             Label("Open", systemImage: "return")
             Label("Navigate", systemImage: "arrow.up.arrow.down")
-            Label("Favorite ⌘K", systemImage: "star")
-            Text("Hold ⌥ and press ↑↓ to rearrange")
+            if model.commandSession == nil {
+                Label("Favorite ⌘K", systemImage: "star")
+                Text("Hold ⌥ and press ↑↓ to rearrange")
+            } else {
+                Label("Back esc", systemImage: "escape")
+            }
             Spacer()
             Button {
                 model.openSettings()
@@ -188,12 +234,23 @@ struct ContentView: View {
         model.selectResult(at: index)
     }
 
+    private var isLoadingResults: Bool {
+        model.commandSession?.isLoading ?? model.isIndexing
+    }
+
     private var emptyStateSymbol: String {
-        if model.isIndexing { return "arrow.trianglehead.2.clockwise.rotate.90" }
-        return model.query.isEmpty ? "star" : "text.magnifyingglass"
+        if isLoadingResults { return "arrow.trianglehead.2.clockwise.rotate.90" }
+        if model.commandSession?.errorMessage != nil { return "exclamationmark.triangle" }
+        if !model.query.isEmpty { return "text.magnifyingglass" }
+        return model.commandSession == nil ? "star" : "tray"
     }
 
     private var emptyStateTitle: String {
+        if let session = model.commandSession {
+            if session.isLoading { return "Loading \(session.extensionName)" }
+            if let errorMessage = session.errorMessage { return errorMessage }
+            return model.query.isEmpty ? "Nothing to show" : "No results for “\(model.query)”"
+        }
         if model.isIndexing { return "Indexing applications" }
         return model.query.isEmpty ? "No favorites yet" : "No results for “\(model.query)”"
     }
@@ -224,6 +281,16 @@ private struct ResultRow: View {
                 }
 
                 Spacer(minLength: 12)
+
+                if result.isExtensionCommand {
+                    Label("Extension", systemImage: "puzzlepiece.extension")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(Color.beaconMuted(scheme))
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(Color.beaconKeycapBackground(scheme), in: Capsule())
+                        .overlay(Capsule().strokeBorder(Color.beaconKeycapBorder(scheme)))
+                }
 
                 if isFavorite {
                     Image(systemName: "star.fill")

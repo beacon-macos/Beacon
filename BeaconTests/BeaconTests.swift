@@ -218,6 +218,19 @@ struct BeaconTests {
         #expect(model.results.first?.id == LauncherModel.settingsResultID)
     }
 
+    @Test @MainActor func rewritingTheSameQueryKeepsTheSelection() {
+        let model = LauncherModel(defaults: isolatedDefaults(named: #function))
+        model.query = "a"
+        #expect(model.results.count > 1)
+
+        model.moveSelection(by: 1)
+        model.query = "a"
+        #expect(model.selectedIndex == 1)
+
+        model.query = "ap"
+        #expect(model.selectedIndex == 0)
+    }
+
     @Test @MainActor func runningSelectedSettingsButtonDismissesLauncherAndOpensSettings() {
         let model = LauncherModel(defaults: isolatedDefaults(named: #function))
         var dismissalCount = 0

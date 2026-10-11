@@ -23,8 +23,11 @@ The project intentionally has no third-party dependencies.
 - `Beacon/LauncherModel.swift`: indexing, search, selection, commands, and launching
 - `Beacon/LauncherPanelController.swift`: floating AppKit panel behavior
 - `Beacon/KeyboardShortcut.swift`: shortcut representation and global registration
-- `Beacon/SettingsView.swift`: shortcut settings and manual reindexing
-- `BeaconTests/BeaconTests.swift`: unit tests using Swift Testing
+- `Beacon/SettingsView.swift`: appearance, shortcut, and extension settings
+- `Beacon/Extension.swift`: extension manifest, catalog, item, and action models
+- `Beacon/ExtensionManager.swift`: installing, updating, and removing extensions from `beacon-macos/extensions`
+- `Beacon/ExtensionRuntime.swift`: JavaScriptCore runtime and host API for extension commands
+- `BeaconTests/BeaconTests.swift`, `BeaconTests/ExtensionTests.swift`: unit tests using Swift Testing
 - `BeaconUITests/`: UI test target
 - `.github/workflows/build-and-release.yml`: CI builds and automatic releases on merges to `master`
 
@@ -35,7 +38,8 @@ The project intentionally has no third-party dependencies.
 - Keep changes focused and preserve unrelated user modifications in the worktree.
 - Follow the style of the surrounding Swift code; do not add a new architecture, package, or dependency unless the task requires it.
 - Keep UI-bound mutable state and AppKit interactions on `@MainActor`.
-- Keep slow filesystem discovery away from the main actor.
+- Keep slow filesystem discovery and extension scripts away from the main actor.
+- Keep the extension host API in `ExtensionRuntime.swift` small and read-only; document any change to it in the `beacon-macos/extensions` CONTRIBUTING guide.
 - Preserve keyboard-first behavior: arrow-key navigation, Return to launch, Escape to dismiss, and the configurable global shortcut.
 - Preserve accessibility labels and identifiers when changing interactive UI.
 - Add or update tests for search normalization, ranking, selection, persistence, and other testable behavior changes.

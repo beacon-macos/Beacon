@@ -67,6 +67,8 @@ enum LauncherTarget: Hashable {
     case application(URL)
     case settings
     case url(URL)
+    case extensionCommand(extensionID: String, commandID: String)
+    case extensionAction(ExtensionAction)
 }
 
 struct LauncherResult: Identifiable, Hashable {
@@ -78,6 +80,11 @@ struct LauncherResult: Identifiable, Hashable {
     let icon: NSImage?
     let target: LauncherTarget
 
+    var isExtensionCommand: Bool {
+        if case .extensionCommand = target { return true }
+        return false
+    }
+
     static func == (lhs: LauncherResult, rhs: LauncherResult) -> Bool {
         lhs.id == rhs.id
     }
@@ -87,6 +94,18 @@ struct LauncherResult: Identifiable, Hashable {
     }
 }
 
+/// An extension command whose items are shown in place of the regular results.
+struct ExtensionCommandSession {
+    let extensionName: String
+    let title: String
+    let placeholder: String
+    let icon: NSImage?
+    let symbolName: String
+    var items: [LauncherResult] = []
+    var isLoading = true
+    var errorMessage: String?
+}
+
 @MainActor
 @Observable
 final class LauncherModel {
@@ -94,6 +113,8 @@ final class LauncherModel {
 
     var query = "" {
         didSet {
+            // The search field writes its text back on Return; keep the selection when nothing changed.
+            guard query != oldValue else { return }
             selectedIndex = 0
             isSettingsButtonSelected = false
             rebuildResults()
@@ -105,9 +126,12 @@ final class LauncherModel {
     var isIndexing = false
     var shortcutRegistrationError: String?
     private(set) var favoriteIDs: [String]
+    private(set) var commandSession: ExtensionCommandSession?
+    let extensions: ExtensionManager
 
     var canReorderFavoriteForSelection: Bool {
         Self.normalized(query).isEmpty
+            && commandSession == nil
             && !isSettingsButtonSelected
             && results.indices.contains(selectedIndex)
     }
@@ -138,11 +162,14 @@ final class LauncherModel {
     }
 
     private var applications: [IndexedApplication] = []
+    private var extensionCommandResults: [LauncherResult] = []
+    private var commandRunID: UUID?
     private var appearanceObservation: NSKeyValueObservation?
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, extensions: ExtensionManager? = nil) {
         self.defaults = defaults
+        self.extensions = extensions ?? ExtensionManager()
         if let savedFavoriteIDs = defaults.stringArray(forKey: Keys.favoriteIDs) {
             favoriteIDs = Self.unique(savedFavoriteIDs)
         } else {
@@ -169,11 +196,14 @@ final class LauncherModel {
         ) { [weak self] _, change in
             guard let appearance = change.newValue else { return }
             let scheme = Self.colorScheme(for: appearance)
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.systemColorScheme = scheme
             }
         }
-        rebuildResults()
+        self.extensions.onInstalledExtensionsChanged = { [weak self] in
+            self?.updateExtensionCommandResults()
+        }
+        updateExtensionCommandResults()
     }
 
     nonisolated static func colorScheme(for appearance: NSAppearance) -> ColorScheme {
@@ -181,9 +211,8 @@ final class LauncherModel {
     }
 
     func prepareForPresentation() {
-        query = ""
-        selectedIndex = 0
-        isSettingsButtonSelected = false
+        cancelExtensionCommand()
+        resetQuery()
     }
 
     func loadApplications() {
@@ -270,8 +299,86 @@ final class LauncherModel {
             return
         case .url(let url):
             NSWorkspace.shared.open(url)
+        case .extensionCommand(let extensionID, let commandID):
+            runExtensionCommand(extensionID: extensionID, commandID: commandID)
+            return
+        case .extensionAction(let action):
+            perform(action)
         }
         dismiss()
+    }
+
+    func runExtensionCommand(extensionID: String, commandID: String) {
+        guard let installedExtension = extensions.installedExtension(withID: extensionID),
+              let command = installedExtension.manifest.commands.first(where: { $0.id == commandID }) else { return }
+
+        let runID = UUID()
+        commandRunID = runID
+        commandSession = ExtensionCommandSession(
+            extensionName: installedExtension.manifest.name,
+            title: command.title,
+            placeholder: command.placeholder ?? "Search \(command.title)",
+            icon: Self.image(for: installedExtension.manifest.icon),
+            symbolName: installedExtension.manifest.icon?.symbol ?? Self.extensionSymbolName
+        )
+        resetQuery()
+
+        Task {
+            let outcome = await Task.detached(priority: .userInitiated) {
+                Result { try ExtensionRuntime.runCommand(commandID, in: installedExtension) }
+            }.value
+            guard commandRunID == runID else { return }
+            switch outcome {
+            case .success(let items):
+                commandSession?.items = items.enumerated().map { index, item in
+                    Self.result(for: item, at: index, extensionID: extensionID)
+                }
+            case .failure(let error):
+                commandSession?.errorMessage = error.localizedDescription
+            }
+            commandSession?.isLoading = false
+            rebuildResults()
+        }
+    }
+
+    /// Leaves the open extension command, or dismisses the launcher when no command is open.
+    func goBack() {
+        guard commandSession != nil else {
+            dismiss()
+            return
+        }
+        cancelExtensionCommand()
+        resetQuery()
+    }
+
+    private func resetQuery() {
+        query = ""
+        selectedIndex = 0
+        isSettingsButtonSelected = false
+        rebuildResults()
+    }
+
+    private func cancelExtensionCommand() {
+        commandRunID = nil
+        commandSession = nil
+    }
+
+    private func perform(_ action: ExtensionAction) {
+        switch action {
+        case .open(let target, let application):
+            guard let url = ExtensionAction.url(forTarget: target) else { return }
+            if let application,
+               let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: application) {
+                NSWorkspace.shared.open(
+                    [url],
+                    withApplicationAt: applicationURL,
+                    configuration: NSWorkspace.OpenConfiguration(),
+                    completionHandler: nil
+                )
+            } else {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     func isFavorite(_ result: LauncherResult) -> Bool {
@@ -280,7 +387,7 @@ final class LauncherModel {
 
     @discardableResult
     func toggleFavoriteForSelection() -> Bool {
-        guard !isSettingsButtonSelected else { return false }
+        guard !isSettingsButtonSelected, commandSession == nil else { return false }
         guard results.indices.contains(selectedIndex) else { return false }
         let result = results[selectedIndex]
         guard result.id != "command:web-search" else { return false }
@@ -321,7 +428,14 @@ final class LauncherModel {
 
     private func rebuildResults() {
         let normalizedQuery = Self.normalized(query)
+        if let commandSession {
+            results = Self.ranked(commandSession.items, query: normalizedQuery)
+            selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
+            return
+        }
+
         var candidates = commandResults()
+        candidates.append(contentsOf: extensionCommandResults)
         candidates.append(contentsOf: applications.map { app in
             LauncherResult(
                 id: "app:\(app.id)",
@@ -368,6 +482,27 @@ final class LauncherModel {
         selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
     }
 
+    private func updateExtensionCommandResults() {
+        extensionCommandResults = extensions.installed.flatMap { installedExtension in
+            let manifest = installedExtension.manifest
+            let icon = Self.image(for: manifest.icon)
+            return manifest.commands.map { command in
+                LauncherResult(
+                    id: "extension:\(manifest.id):\(command.id)",
+                    title: command.title,
+                    subtitle: command.subtitle ?? manifest.name,
+                    symbolName: manifest.icon?.symbol ?? Self.extensionSymbolName,
+                    tint: .blue,
+                    icon: icon,
+                    target: .extensionCommand(extensionID: manifest.id, commandID: command.id)
+                )
+            }
+        }
+        if commandSession == nil {
+            rebuildResults()
+        }
+    }
+
     private func commandResults() -> [LauncherResult] {
         return [
             LauncherResult(
@@ -389,6 +524,46 @@ final class LauncherModel {
                 target: .url(URL(filePath: "/Applications"))
             )
         ]
+    }
+
+    private static let extensionSymbolName = "puzzlepiece.extension.fill"
+
+    private static func result(for item: ExtensionItem, at index: Int, extensionID: String) -> LauncherResult {
+        LauncherResult(
+            id: "extension-item:\(extensionID):\(index)",
+            title: item.title,
+            subtitle: item.subtitle ?? "",
+            symbolName: item.icon?.symbol ?? "circle.fill",
+            tint: .blue,
+            icon: image(for: item.icon),
+            target: .extensionAction(item.action)
+        )
+    }
+
+    static func image(for icon: ExtensionIcon?) -> NSImage? {
+        if let bundleIdentifier = icon?.app,
+           let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+            return NSWorkspace.shared.icon(forFile: applicationURL.path)
+        }
+        if let path = icon?.file {
+            let expandedPath = ExtensionRuntime.expandingTilde(in: path)
+            guard FileManager.default.fileExists(atPath: expandedPath) else { return nil }
+            return NSWorkspace.shared.icon(forFile: expandedPath)
+        }
+        return nil
+    }
+
+    /// Filters items by the query, keeping their original order when nothing is typed or scores tie.
+    static func ranked(_ items: [LauncherResult], query: String) -> [LauncherResult] {
+        guard !query.isEmpty else { return items }
+        return items.enumerated().compactMap { index, item -> (index: Int, item: LauncherResult, score: Int)? in
+            guard let score = matchScore(query: query, candidate: normalized(item.title + " " + item.subtitle)) else {
+                return nil
+            }
+            return (index, item, score)
+        }
+        .sorted { $0.score == $1.score ? $0.index < $1.index : $0.score > $1.score }
+        .map(\.item)
     }
 
     nonisolated static func normalized(_ value: String) -> String {
