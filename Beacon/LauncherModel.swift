@@ -71,6 +71,8 @@ enum LauncherTarget: Hashable {
     case extensionCommand(extensionID: String, commandID: String)
     case extensionAction(ExtensionAction)
     case extensionListing(ExtensionManager.Listing)
+    case copy(String)
+    case reloadExchangeRates
 }
 
 /// Compares every property because `@Observable` skips notifying views when `results` is set to an equal value.
@@ -106,6 +108,7 @@ struct ExtensionCommandSession {
 final class LauncherModel {
     static let settingsResultID = "command:settings"
     static let extensionsResultID = "command:extensions"
+    static let calculationResultID = "command:calculation"
 
     var query = "" {
         didSet {
@@ -125,6 +128,7 @@ final class LauncherModel {
     private(set) var commandSession: ExtensionCommandSession?
     private(set) var isShowingExtensions = false
     let extensions: ExtensionManager
+    let exchangeRates: ExchangeRates
 
     var isShowingPage: Bool {
         commandSession != nil || isShowingExtensions
@@ -173,12 +177,22 @@ final class LauncherModel {
     private var extensionCommandResults: [LauncherResult] = []
     private var extensionListingResults: [LauncherResult] = []
     private var commandRunID: UUID?
+    private var currencyNames: CurrencyNames?
+    private var isLoadingCurrencyNames = false
     private var appearanceObservation: NSKeyValueObservation?
     private let defaults: UserDefaults
+    private let locale: Locale
 
-    init(defaults: UserDefaults = .standard, extensions: ExtensionManager? = nil) {
+    init(
+        defaults: UserDefaults = .standard,
+        extensions: ExtensionManager? = nil,
+        exchangeRates: ExchangeRates? = nil,
+        locale: Locale = .autoupdatingCurrent
+    ) {
         self.defaults = defaults
         self.extensions = extensions ?? ExtensionManager()
+        self.exchangeRates = exchangeRates ?? ExchangeRates()
+        self.locale = locale
         if let savedFavoriteIDs = defaults.stringArray(forKey: Keys.favoriteIDs) {
             favoriteIDs = Self.unique(savedFavoriteIDs)
         } else {
@@ -211,6 +225,9 @@ final class LauncherModel {
         }
         self.extensions.onInstalledExtensionsChanged = { [weak self] in
             self?.updateExtensionResults()
+        }
+        self.exchangeRates.onChange = { [weak self] in
+            self?.rebuildResults()
         }
         updateExtensionResults()
     }
@@ -320,6 +337,13 @@ final class LauncherModel {
             if !listing.isInstalled || extensions.isUpdateAvailable(for: listing.id) {
                 Task { await extensions.install(listing.id) }
             }
+            return
+        case .copy(let text):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        case .reloadExchangeRates:
+            exchangeRates.refresh()
+            rebuildResults()
             return
         }
         dismiss()
@@ -436,7 +460,7 @@ final class LauncherModel {
         guard !isSettingsButtonSelected, !isShowingPage else { return false }
         guard results.indices.contains(selectedIndex) else { return false }
         let result = results[selectedIndex]
-        guard result.id != "command:web-search" else { return false }
+        guard result.id != "command:web-search", result.id != Self.calculationResultID else { return false }
 
         if let index = favoriteIDs.firstIndex(of: result.id) {
             favoriteIDs.remove(at: index)
@@ -516,6 +540,9 @@ final class LauncherModel {
             .prefix(30)
             .map(\.0)
 
+            if let calculation = calculationResult() {
+                results.insert(calculation, at: 0)
+            }
             if let webURL = Self.webSearchURL(for: query) {
                 results.append(
                     LauncherResult(
@@ -531,6 +558,80 @@ final class LauncherModel {
             }
         }
         selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
+    }
+
+    private func calculationResult() -> LauncherResult? {
+        let expression = query.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "=")))
+        if let value = Calculator.evaluate(expression, locale: locale) {
+            return LauncherResult(
+                id: Self.calculationResultID,
+                title: "\(expression) = \(Calculator.format(value, locale: locale))",
+                subtitle: "Calculator",
+                symbolName: "plus.forwardslash.minus",
+                tint: .sand,
+                icon: nil,
+                target: .copy(Calculator.format(value, locale: locale, usesGrouping: false))
+            )
+        }
+
+        guard CurrencyNames.mightContainConversion(expression) else { return nil }
+        guard let currencyNames else {
+            loadCurrencyNames()
+            return nil
+        }
+        guard let conversion = CurrencyConversion.parse(
+            expression,
+            names: currencyNames,
+            localCurrency: locale.currency?.identifier,
+            locale: locale
+        ) else { return nil }
+        exchangeRates.refreshIfNeeded()
+
+        let amount = "\(Calculator.format(conversion.amount, locale: locale)) \(conversion.source)"
+        let currencies = "\(currencyName(conversion.source)) → \(currencyName(conversion.target))"
+        guard let snapshot = exchangeRates.snapshot else {
+            return LauncherResult(
+                id: Self.calculationResultID,
+                title: "\(amount) → \(conversion.target)",
+                subtitle: exchangeRates.isLoading
+                    ? "Loading exchange rates…"
+                    : "Couldn’t load exchange rates. Press Return to try again.",
+                symbolName: "dollarsign.arrow.circlepath",
+                tint: .green,
+                icon: nil,
+                target: .reloadExchangeRates
+            )
+        }
+        guard let rate = exchangeRates.rate(from: conversion.source, to: conversion.target) else { return nil }
+
+        let convertedAmount = conversion.amount * rate
+        return LauncherResult(
+            id: Self.calculationResultID,
+            title: "\(amount) = \(CurrencyConversion.format(convertedAmount, locale: locale)) \(conversion.target)",
+            subtitle: "\(currencies) · Rates from \(ratesDate(snapshot))",
+            symbolName: "dollarsign.arrow.circlepath",
+            tint: .green,
+            icon: nil,
+            target: .copy(CurrencyConversion.format(convertedAmount, locale: locale, usesGrouping: false))
+        )
+    }
+
+    private func loadCurrencyNames() {
+        guard !isLoadingCurrencyNames else { return }
+        isLoadingCurrencyNames = true
+        Task {
+            currencyNames = await Task.detached(priority: .userInitiated) { CurrencyNames.shared }.value
+            rebuildResults()
+        }
+    }
+
+    private func currencyName(_ code: String) -> String {
+        locale.localizedString(forCurrencyCode: code) ?? code
+    }
+
+    private func ratesDate(_ snapshot: ExchangeRates.Snapshot) -> String {
+        guard let date = try? Date(snapshot.date, strategy: .iso8601.year().month().day()) else { return snapshot.date }
+        return date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: locale, timeZone: .gmt))
     }
 
     private func updateExtensionResults() {

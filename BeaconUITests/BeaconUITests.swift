@@ -5,6 +5,7 @@
 //  Created by Denys Yazan on 22.08.2026.
 //
 
+import AppKit
 import XCTest
 
 final class BeaconUITests: XCTestCase {
@@ -133,6 +134,30 @@ final class BeaconUITests: XCTestCase {
         searchField.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(chip.waitForNonExistence(timeout: 2))
         XCTAssertTrue(searchField.exists)
+    }
+
+    @MainActor
+    func testReturnCopiesTheCalculationResult() throws {
+        let app = application(favoriteIDs: [])
+        app.launch()
+
+        let searchField = app.textFields["launcherSearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 2))
+        searchField.click()
+        searchField.typeText("2+2")
+
+        let calculation = app.buttons["calculationResult"]
+        XCTAssertTrue(calculation.waitForExistence(timeout: 2))
+        XCTAssertTrue(calculation.label.contains("2+2 = 4"))
+        XCTAssertTrue(calculation.isSelected)
+
+        NSPasteboard.general.clearContents()
+        searchField.typeKey(.return, modifierFlags: [])
+
+        let copied = expectation(for: NSPredicate { _, _ in
+            NSPasteboard.general.string(forType: .string) == "4"
+        }, evaluatedWith: nil)
+        wait(for: [copied], timeout: 2)
     }
 
     @MainActor
