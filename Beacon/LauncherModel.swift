@@ -66,11 +66,14 @@ enum BeaconTint {
 enum LauncherTarget: Hashable {
     case application(URL)
     case settings
+    case extensions
     case url(URL)
     case extensionCommand(extensionID: String, commandID: String)
     case extensionAction(ExtensionAction)
+    case extensionListing(ExtensionManager.Listing)
 }
 
+/// Compares every property because `@Observable` skips notifying views when `results` is set to an equal value.
 struct LauncherResult: Identifiable, Hashable {
     let id: String
     let title: String
@@ -83,14 +86,6 @@ struct LauncherResult: Identifiable, Hashable {
     var isExtensionCommand: Bool {
         if case .extensionCommand = target { return true }
         return false
-    }
-
-    static func == (lhs: LauncherResult, rhs: LauncherResult) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
     }
 }
 
@@ -110,6 +105,7 @@ struct ExtensionCommandSession {
 @Observable
 final class LauncherModel {
     static let settingsResultID = "command:settings"
+    static let extensionsResultID = "command:extensions"
 
     var query = "" {
         didSet {
@@ -127,15 +123,27 @@ final class LauncherModel {
     var shortcutRegistrationError: String?
     private(set) var favoriteIDs: [String]
     private(set) var commandSession: ExtensionCommandSession?
+    private(set) var isShowingExtensions = false
     let extensions: ExtensionManager
+
+    var isShowingPage: Bool {
+        commandSession != nil || isShowingExtensions
+    }
 
     var canReorderFavoriteForSelection: Bool {
         Self.normalized(query).isEmpty
-            && commandSession == nil
+            && !isShowingPage
             && !isSettingsButtonSelected
             && results.indices.contains(selectedIndex)
     }
 
+    var selectedExtensionListing: ExtensionManager.Listing? {
+        guard isShowingExtensions, !isSettingsButtonSelected, results.indices.contains(selectedIndex),
+              case .extensionListing(let listing) = results[selectedIndex].target else { return nil }
+        return listing
+    }
+
+    var onPresent: (() -> Void)?
     var onDismiss: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onShortcutChanged: ((KeyboardShortcut) -> Void)?
@@ -163,6 +171,7 @@ final class LauncherModel {
 
     private var applications: [IndexedApplication] = []
     private var extensionCommandResults: [LauncherResult] = []
+    private var extensionListingResults: [LauncherResult] = []
     private var commandRunID: UUID?
     private var appearanceObservation: NSKeyValueObservation?
     private let defaults: UserDefaults
@@ -201,9 +210,9 @@ final class LauncherModel {
             }
         }
         self.extensions.onInstalledExtensionsChanged = { [weak self] in
-            self?.updateExtensionCommandResults()
+            self?.updateExtensionResults()
         }
-        updateExtensionCommandResults()
+        updateExtensionResults()
     }
 
     nonisolated static func colorScheme(for appearance: NSAppearance) -> ColorScheme {
@@ -211,7 +220,7 @@ final class LauncherModel {
     }
 
     func prepareForPresentation() {
-        cancelExtensionCommand()
+        closePage()
         resetQuery()
     }
 
@@ -297,6 +306,9 @@ final class LauncherModel {
         case .settings:
             openSettings()
             return
+        case .extensions:
+            openExtensions()
+            return
         case .url(let url):
             NSWorkspace.shared.open(url)
         case .extensionCommand(let extensionID, let commandID):
@@ -304,8 +316,41 @@ final class LauncherModel {
             return
         case .extensionAction(let action):
             perform(action)
+        case .extensionListing(let listing):
+            if !listing.isInstalled || extensions.isUpdateAvailable(for: listing.id) {
+                Task { await extensions.install(listing.id) }
+            }
+            return
         }
         dismiss()
+    }
+
+    func openExtensions() {
+        closePage()
+        isShowingExtensions = true
+        resetQuery()
+        refreshExtensionCatalog()
+    }
+
+    func presentExtensions() {
+        onPresent?()
+        openExtensions()
+    }
+
+    func refreshExtensionCatalog() {
+        Task {
+            await extensions.refreshCatalog()
+            updateExtensionResults()
+        }
+    }
+
+    @discardableResult
+    func uninstallSelectedExtension() -> Bool {
+        guard let listing = selectedExtensionListing,
+              listing.isInstalled,
+              !extensions.busyExtensionIDs.contains(listing.id) else { return false }
+        extensions.uninstall(listing.id)
+        return true
     }
 
     func runExtensionCommand(extensionID: String, commandID: String) {
@@ -341,13 +386,13 @@ final class LauncherModel {
         }
     }
 
-    /// Leaves the open extension command, or dismisses the launcher when no command is open.
+    /// Leaves the open extension command or extensions page, or dismisses the launcher when neither is open.
     func goBack() {
-        guard commandSession != nil else {
+        guard isShowingPage else {
             dismiss()
             return
         }
-        cancelExtensionCommand()
+        closePage()
         resetQuery()
     }
 
@@ -358,9 +403,10 @@ final class LauncherModel {
         rebuildResults()
     }
 
-    private func cancelExtensionCommand() {
+    private func closePage() {
         commandRunID = nil
         commandSession = nil
+        isShowingExtensions = false
     }
 
     private func perform(_ action: ExtensionAction) {
@@ -387,7 +433,7 @@ final class LauncherModel {
 
     @discardableResult
     func toggleFavoriteForSelection() -> Bool {
-        guard !isSettingsButtonSelected, commandSession == nil else { return false }
+        guard !isSettingsButtonSelected, !isShowingPage else { return false }
         guard results.indices.contains(selectedIndex) else { return false }
         let result = results[selectedIndex]
         guard result.id != "command:web-search" else { return false }
@@ -430,6 +476,11 @@ final class LauncherModel {
         let normalizedQuery = Self.normalized(query)
         if let commandSession {
             results = Self.ranked(commandSession.items, query: normalizedQuery)
+            selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
+            return
+        }
+        if isShowingExtensions {
+            results = Self.ranked(extensionListingResults, query: normalizedQuery)
             selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
             return
         }
@@ -482,7 +533,7 @@ final class LauncherModel {
         selectedIndex = results.isEmpty ? 0 : min(selectedIndex, results.count - 1)
     }
 
-    private func updateExtensionCommandResults() {
+    private func updateExtensionResults() {
         extensionCommandResults = extensions.installed.flatMap { installedExtension in
             let manifest = installedExtension.manifest
             let icon = Self.image(for: manifest.icon)
@@ -498,6 +549,7 @@ final class LauncherModel {
                 )
             }
         }
+        extensionListingResults = extensions.listings.map(Self.result(for:))
         if commandSession == nil {
             rebuildResults()
         }
@@ -513,6 +565,15 @@ final class LauncherModel {
                 tint: .clay,
                 icon: nil,
                 target: .settings
+            ),
+            LauncherResult(
+                id: Self.extensionsResultID,
+                title: "Manage Extensions",
+                subtitle: "Install, update, and remove Beacon extensions",
+                symbolName: Self.extensionSymbolName,
+                tint: .blue,
+                icon: nil,
+                target: .extensions
             ),
             LauncherResult(
                 id: "command:applications",
@@ -537,6 +598,18 @@ final class LauncherModel {
             tint: .blue,
             icon: image(for: item.icon),
             target: .extensionAction(item.action)
+        )
+    }
+
+    private static func result(for listing: ExtensionManager.Listing) -> LauncherResult {
+        LauncherResult(
+            id: "extension-listing:\(listing.id)",
+            title: listing.name,
+            subtitle: listing.description,
+            symbolName: listing.icon?.symbol ?? extensionSymbolName,
+            tint: .blue,
+            icon: image(for: listing.icon),
+            target: .extensionListing(listing)
         )
     }
 

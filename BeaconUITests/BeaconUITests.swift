@@ -135,6 +135,33 @@ final class BeaconUITests: XCTestCase {
         XCTAssertTrue(searchField.exists)
     }
 
+    @MainActor
+    func testSettingsOpensTheExtensionsPage() throws {
+        let app = application(favoriteIDs: ["command:settings"], extensionsDirectory: try fixtureExtensionsDirectory())
+        app.launch()
+
+        let searchField = app.textFields["launcherSearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 2))
+        searchField.typeKey(.return, modifierFlags: [])
+
+        let manageExtensionsButton = app.buttons["manageExtensionsButton"]
+        XCTAssertTrue(manageExtensionsButton.waitForExistence(timeout: 2))
+        manageExtensionsButton.click()
+
+        let chip = app.buttons["extensionsPageChip"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 2))
+        let fixtureListing = app.descendants(matching: .any)
+            .matching(identifier: "extensionListing")
+            .containing(NSPredicate(format: "label == %@", "Fixture"))
+            .firstMatch
+        XCTAssertTrue(fixtureListing.waitForExistence(timeout: 10))
+        XCTAssertTrue(fixtureListing.buttons["uninstallExtensionButton"].exists)
+
+        searchField.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(searchField.exists)
+    }
+
     private func application(favoriteIDs: [String], extensionsDirectory: URL? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["BEACON_UI_TESTING"] = "1"

@@ -65,6 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = false
 
         panelController = LauncherPanelController(model: model)
+        model.onPresent = { [weak self] in
+            self?.panelController?.show()
+        }
         model.onDismiss = { [weak self] in
             self?.panelController?.hide()
         }
