@@ -26,7 +26,7 @@ The project intentionally has no third-party dependencies.
 - `Beacon/SettingsView.swift`: shortcut settings and manual reindexing
 - `BeaconTests/BeaconTests.swift`: unit tests using Swift Testing
 - `BeaconUITests/`: UI test target
-- `.github/workflows/build-and-release.yml`: CI builds and tagged releases
+- `.github/workflows/build-and-release.yml`: CI builds and automatic releases on merges to `master`
 
 ## Working rules
 

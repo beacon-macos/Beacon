@@ -42,34 +42,29 @@ xcodebuild -project Beacon.xcodeproj -scheme Beacon -configuration Debug build
 
 ## Releases
 
-Every push and pull request to `master` is built and tested by GitHub Actions. Pushing a semantic version tag automatically creates a GitHub Release containing universal DMG, PKG, and ZIP packages.
+Every push and pull request to `master` is built and tested by GitHub Actions. Every merge to `master` that contains a releasable change automatically creates a GitHub Release containing universal DMG, PKG, and ZIP packages.
 
-### Create a release
+### How the version is chosen
 
-1. Commit the changes that should be included in the release and push them to `master`:
+The workflow reads the Conventional Commits messages merged since the latest `vMAJOR.MINOR.PATCH` tag. Because pull requests are squash-merged, these are the pull request titles:
 
-   ```sh
-   git add -A
-   git commit -m "Prepare Beacon 1.0.1"
-   git push origin master
-   ```
+| Commits since the last release | Next version |
+| --- | --- |
+| `type!:` in a title, or a `BREAKING CHANGE:` footer | major, for example `v1.2.0` → `v2.0.0` |
+| `feat` | minor, for example `v1.2.0` → `v1.3.0` |
+| `fix` or `perf` | patch, for example `v1.2.0` → `v1.2.1` |
+| only `docs`, `ci`, `chore`, `refactor`, `test`, `style`, or `build` | no release |
 
-2. Create an annotated tag on that commit and push it to GitHub:
+The workflow creates the tag on the merged commit, publishes the release with generated notes, and builds the app with the matching version. Follow the run in [GitHub Actions](https://github.com/dhkey/Beacon/actions); when it succeeds, the new version appears on the [Releases page](https://github.com/dhkey/Beacon/releases). If a run fails, nothing is tagged, and the next releasable merge includes those changes.
 
-   ```sh
-   git tag -a v1.0.1 -m "Beacon 1.0.1"
-   git push origin v1.0.1
-   ```
+### Release manually
 
-3. Follow the build in [GitHub Actions](https://github.com/dhkey/Beacon/actions). When it succeeds, the new version appears on the [Releases page](https://github.com/dhkey/Beacon/releases).
+To publish a release that the commit history would not produce, such as one containing only documentation changes, push an annotated tag in the exact `vMAJOR.MINOR.PATCH` format on a commit in `master`:
 
-Each release must use a new tag in the exact `vMAJOR.MINOR.PATCH` format, for example:
-
-- `v1.0.2` for a bug-fix release
-- `v1.1.0` for a feature release
-- `v2.0.0` for a major release with breaking changes
-
-The workflow uses the contents of the tagged commit, so push and tag the final release-ready commit.
+```sh
+git tag -a v1.2.1 -m "Beacon 1.2.1"
+git push origin v1.2.1
+```
 
 ## Install a release
 
