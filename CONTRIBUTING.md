@@ -129,7 +129,7 @@ refactor(search): extract application discovery from LauncherModel
 docs: document the pull request title convention
 ```
 
-The title is the squash-merge commit message, so it must stand on its own in the `master` history. Keep it under roughly 72 characters, start the summary with a lowercase imperative verb, and do not end it with a period. Do not prefix the title with an issue number, a branch name, or `WIP`; mark work in progress by opening the pull request as a draft instead.
+The title is the squash-merge commit message, so it must stand on its own in the `master` history. Its type also decides the next release when the pull request is merged: `feat` publishes a minor release, `fix` and `perf` publish a patch release, `type!:` publishes a major release, and other types do not publish a release. Keep it under roughly 72 characters, start the summary with a lowercase imperative verb, and do not end it with a period. Do not prefix the title with an issue number, a branch name, or `WIP`; mark work in progress by opening the pull request as a draft instead.
 
 ### Description
 
@@ -139,4 +139,4 @@ The title is the squash-merge commit message, so it must stand on its own in the
 - Keep each pull request focused on one concern.
 - Confirm that the project builds and tests pass locally.
 
-GitHub Actions builds and tests every pull request targeting `master`. A maintainer creates releases after changes are merged; contributors do not need to create release tags.
+GitHub Actions builds and tests every pull request targeting `master`. Merging a pull request into `master` publishes a release automatically when its title calls for one; contributors do not need to create release tags.
