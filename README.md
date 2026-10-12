@@ -60,6 +60,8 @@ The workflow reads the Conventional Commits messages merged since the latest `vM
 
 The workflow creates the tag on the merged commit, publishes the release with generated notes, and builds the app with the matching version. Follow the run in [GitHub Actions](https://github.com/dhkey/Beacon/actions); when it succeeds, the new version appears on the [Releases page](https://github.com/dhkey/Beacon/releases). If a run fails, nothing is tagged, and the next releasable merge includes those changes.
 
+The release job signs the ZIP with the Ed25519 private key in the `UPDATE_SIGNING_KEY` repository secret and publishes the signature next to it as `Beacon-vX.Y.Z.zip.sig`. The release fails when the secret is missing or does not match `signingPublicKey` in `Beacon/Updater.swift`.
+
 ### Release manually
 
 To publish a release that the commit history would not produce, such as one containing only documentation changes, push an annotated tag in the exact `vMAJOR.MINOR.PATCH` format on a commit in `master`:
@@ -79,7 +81,7 @@ The PKG provides a guided installer, while the ZIP contains the standalone appli
 
 ## Updates
 
-Beacon checks the [latest GitHub Release](https://github.com/beacon-macos/Beacon/releases/latest) when it starts and every six hours. When a newer version is out, it appears as the last result in the launcher. Press `Return` on it to download the update, verify it, and relaunch Beacon with the new version. Search for **Check for Updates** to check right away.
+Beacon checks the [latest GitHub Release](https://github.com/beacon-macos/Beacon/releases/latest) when it starts and every six hours. When a newer version is out, it appears as the last result in the launcher. Press `Return` on it to download the update, verify it, and relaunch Beacon with the new version. Search for **Check for Updates** to check right away. Beacon installs an update only when its ZIP is signed with the project's release key, so a release file replaced on GitHub by someone without that key is not installed.
 
 Turn on **Install updates automatically** in Beacon Settings to download new versions in the background and relaunch Beacon while you are not using it. Beacon can replace itself only when it can write to its own application folder. Otherwise, such as after installing with the PKG, the update result opens the release page so you can download the new version yourself.
 

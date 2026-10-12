@@ -12,11 +12,12 @@ final class Updater {
         struct Archive: Equatable, Sendable {
             let url: URL
             let sha256: String
+            let signatureURL: URL
         }
 
         let version: String
         let pageURL: URL
-        /// The `Beacon-vX.Y.Z.zip` asset, or `nil` when it has not been uploaded yet or has no digest.
+        /// The `Beacon-vX.Y.Z.zip` asset, or `nil` when it has not been uploaded yet or has no digest or signature.
         let archive: Archive?
     }
 
@@ -30,6 +31,8 @@ final class Updater {
 
     nonisolated static let repositoryName = "beacon-macos/Beacon"
     nonisolated static let latestReleaseURL = URL(string: "https://api.github.com/repos/\(repositoryName)/releases/latest")!
+    /// The Ed25519 key that verifies update archives. The release workflow signs each one with the matching private key.
+    nonisolated static let signingPublicKey = Data(base64Encoded: "BHeWSrn9TMPFv0mFDulL4HYu+hxmWhefW325sEPZ8bo=")!
     /// Tells the relaunched application to start without showing the launcher.
     nonisolated static let backgroundRelaunchArgument = "--updated-in-background"
 
@@ -56,6 +59,7 @@ final class Updater {
     private let applicationURL: URL
     private let bundleIdentifier: String?
     private let latestReleaseURL: URL
+    private let signingPublicKey: Data
     private let session: URLSession
     private let defaults: UserDefaults
     private var preparation: Task<Void, Never>?
@@ -67,6 +71,7 @@ final class Updater {
         applicationURL: URL = Bundle.main.bundleURL,
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,
         latestReleaseURL: URL = Updater.latestReleaseURL,
+        signingPublicKey: Data = Updater.signingPublicKey,
         session: URLSession = .shared
     ) {
         self.defaults = defaults
@@ -74,6 +79,7 @@ final class Updater {
         self.applicationURL = applicationURL
         self.bundleIdentifier = bundleIdentifier
         self.latestReleaseURL = latestReleaseURL
+        self.signingPublicKey = signingPublicKey
         self.session = session
         automaticallyInstallsUpdates = defaults.bool(forKey: Keys.automaticallyInstallsUpdates)
         lastCheckDate = defaults.object(forKey: Keys.lastCheckDate) as? Date
@@ -128,12 +134,16 @@ final class Updater {
             onChange?()
             do {
                 let data = try await download(archive.url)
+                let signature = try await download(archive.signatureURL)
                 let applicationURL = applicationURL
                 let bundleIdentifier = bundleIdentifier
+                let signingPublicKey = signingPublicKey
                 preparedApplicationURL = try await Task.detached(priority: .utility) {
                     try Self.unpack(
                         data,
                         archive: archive,
+                        signature: signature,
+                        signingPublicKey: signingPublicKey,
                         version: release.version,
                         bundleIdentifier: bundleIdentifier,
                         replacing: applicationURL
@@ -217,11 +227,15 @@ final class Updater {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let feed = try decoder.decode(Feed.self, from: data)
         let version = feed.tagName.hasPrefix("v") ? String(feed.tagName.dropFirst()) : feed.tagName
-        let archive = feed.assets.first { $0.name == "Beacon-\(feed.tagName).zip" }.flatMap { asset in
-            asset.digest.flatMap { digest -> Release.Archive? in
-                guard digest.hasPrefix("sha256:") else { return nil }
-                return Release.Archive(url: asset.browserDownloadUrl, sha256: String(digest.dropFirst(7)).lowercased())
-            }
+        let archiveName = "Beacon-\(feed.tagName).zip"
+        let signatureAsset = feed.assets.first { $0.name == archiveName + ".sig" }
+        let archive = feed.assets.first { $0.name == archiveName }.flatMap { asset -> Release.Archive? in
+            guard let digest = asset.digest, digest.hasPrefix("sha256:"), let signatureAsset else { return nil }
+            return Release.Archive(
+                url: asset.browserDownloadUrl,
+                sha256: String(digest.dropFirst(7)).lowercased(),
+                signatureURL: signatureAsset.browserDownloadUrl
+            )
         }
         return Release(version: version, pageURL: feed.htmlUrl, archive: archive)
     }
@@ -230,12 +244,17 @@ final class Updater {
     nonisolated static func unpack(
         _ data: Data,
         archive: Release.Archive,
+        signature: Data,
+        signingPublicKey: Data,
         version: String,
         bundleIdentifier: String?,
         replacing applicationURL: URL
     ) throws -> URL {
         let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         guard digest == archive.sha256 else { throw UpdateError.damagedArchive }
+        // The digest comes from the same GitHub release as the archive, so only the signature shows who built it.
+        guard let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: signingPublicKey),
+              publicKey.isValidSignature(signature, for: data) else { throw UpdateError.untrustedArchive }
 
         let fileManager = FileManager.default
         let directory = try fileManager.url(
@@ -300,6 +319,7 @@ final class Updater {
 nonisolated enum UpdateError: LocalizedError, Equatable {
     case download(String)
     case damagedArchive
+    case untrustedArchive
     case missingApplication
     case unexpectedApplication
     case invalidSignature
@@ -310,6 +330,8 @@ nonisolated enum UpdateError: LocalizedError, Equatable {
             return "Download failed: \(message)"
         case .damagedArchive:
             return "The downloaded update is damaged."
+        case .untrustedArchive:
+            return "The downloaded update is not signed by Beacon's release key."
         case .missingApplication:
             return "The downloaded update does not contain Beacon."
         case .unexpectedApplication:
