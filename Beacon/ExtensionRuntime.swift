@@ -127,6 +127,10 @@ nonisolated enum SQLiteReader {
             throw Failure(errorDescription: String(cString: sqlite3_errmsg(database)))
         }
         defer { sqlite3_finalize(statement) }
+        // A read-only connection still lets `VACUUM INTO` create a file, so only statements that read are run.
+        guard sqlite3_stmt_readonly(statement) != 0 else {
+            throw Failure(errorDescription: "Only statements that read the database are allowed.")
+        }
 
         var rows: [[String: Any]] = []
         while true {

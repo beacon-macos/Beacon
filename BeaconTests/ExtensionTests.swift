@@ -114,6 +114,28 @@ struct ExtensionTests {
         #expect(items.map(\.title) == ["caught"])
     }
 
+    @Test func sqliteQueriesCannotWriteFiles() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appending(path: "state.db")
+        try createDatabase(at: databaseURL, statements: ["CREATE TABLE items (name TEXT)"])
+        let copyURL = directory.appending(path: "copy.db")
+
+        let items = try ExtensionRuntime.runCommand("query", source: """
+            beacon.registerCommand("query", () => {
+              try {
+                beacon.querySQLite("\(databaseURL.path)", "VACUUM INTO '\(copyURL.path)'");
+                return [];
+              } catch (error) {
+                return [{ title: String(error.message), action: { type: "open", target: "/" } }];
+              }
+            });
+            """)
+
+        #expect(items.map(\.title) == ["Only statements that read the database are allowed."])
+        #expect(!FileManager.default.fileExists(atPath: copyURL.path))
+    }
+
     @Test @MainActor func managerInstallsUpdatesAndUninstallsExtensions() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
