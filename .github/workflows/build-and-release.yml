@@ -197,11 +197,44 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out the update public key
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: Beacon/Updater.swift
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Download release files
         uses: actions/download-artifact@v8
         with:
           name: Beacon-build
           path: dist
+
+      - name: Sign update archive
+        env:
+          TAG: ${{ needs.build.outputs.tag }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${UPDATE_SIGNING_KEY}" ]]; then
+            echo "The UPDATE_SIGNING_KEY secret is not set" >&2
+            exit 1
+          fi
+
+          key="${RUNNER_TEMP}/update-signing-key.pem"
+          trap 'rm -f "${key}"' EXIT
+          (umask 077 && printf '%s\n' "${UPDATE_SIGNING_KEY}" > "${key}")
+
+          # Beacon accepts only archives signed by the key matching this public key.
+          public_key="$(sed -n 's/.*signingPublicKey = Data(base64Encoded: "\([^"]*\)").*/\1/p' Beacon/Updater.swift)"
+          signing_public_key="$(openssl pkey -in "${key}" -pubout -outform DER | tail -c 32 | base64)"
+          if [[ -z "${public_key}" || "${signing_public_key}" != "${public_key}" ]]; then
+            echo "UPDATE_SIGNING_KEY does not match signingPublicKey in Beacon/Updater.swift" >&2
+            exit 1
+          fi
+
+          archive="dist/Beacon-${TAG}.zip"
+          openssl pkeyutl -sign -rawin -inkey "${key}" -in "${archive}" -out "${archive}.sig"
 
       - name: Create GitHub Release
         env:
@@ -216,6 +249,7 @@ jobs:
             dist/*.dmg \
             dist/*.pkg \
             dist/*.zip \
+            dist/*.zip.sig \
             --target "${GITHUB_SHA}" \
             --generate-notes \
             --title "Beacon ${TAG}"

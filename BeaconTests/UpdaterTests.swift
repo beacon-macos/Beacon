@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import Beacon
@@ -5,6 +6,8 @@ import Testing
 struct UpdaterTests {
 
     private static let bundleIdentifier = "com.dhkey.Beacon"
+    private static let signingKey = Curve25519.Signing.PrivateKey()
+    private static let otherSigningKey = Curve25519.Signing.PrivateKey()
 
     private enum Signature {
         case valid
@@ -12,23 +15,35 @@ struct UpdaterTests {
         case broken
     }
 
-    @Test func releaseUsesTheTaggedArchiveAndItsDigest() throws {
+    @Test func releaseUsesTheTaggedArchiveItsDigestAndItsSignature() throws {
         let release = try Updater.release(from: feed(tag: "v1.5.0", assets: [
             ("Beacon-v1.5.0.dmg", "https://example.com/Beacon-v1.5.0.dmg", "sha256:00"),
-            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:ABC123")
+            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:ABC123"),
+            ("Beacon-v1.5.0.zip.sig", "https://example.com/Beacon-v1.5.0.zip.sig", nil)
         ]))
         #expect(release.version == "1.5.0")
         #expect(release.pageURL == URL(string: "https://github.com/beacon-macos/Beacon/releases/tag/v1.5.0"))
         #expect(release.archive == Updater.Release.Archive(
             url: URL(string: "https://example.com/Beacon-v1.5.0.zip")!,
-            sha256: "abc123"
+            sha256: "abc123",
+            signatureURL: URL(string: "https://example.com/Beacon-v1.5.0.zip.sig")!
         ))
 
         let withoutDigest = try Updater.release(from: feed(tag: "v1.5.0", assets: [
-            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", nil)
+            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", nil),
+            ("Beacon-v1.5.0.zip.sig", "https://example.com/Beacon-v1.5.0.zip.sig", nil)
         ]))
         #expect(withoutDigest.archive == nil)
+        let withoutSignature = try Updater.release(from: feed(tag: "v1.5.0", assets: [
+            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:ABC123")
+        ]))
+        #expect(withoutSignature.archive == nil)
         #expect(try Updater.release(from: feed(tag: "v1.5.0", assets: [])).archive == nil)
+    }
+
+    @Test func releaseKeyIsAnEd25519PublicKey() throws {
+        let key = try Curve25519.Signing.PublicKey(rawRepresentation: Updater.signingPublicKey)
+        #expect(key.rawRepresentation == Updater.signingPublicKey)
     }
 
     @Test @MainActor func checkOffersOnlyNewerReleases() async throws {
@@ -36,7 +51,8 @@ struct UpdaterTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let feedURL = directory.appending(path: "latest.json")
         try feed(tag: "v1.5.0", assets: [
-            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:00")
+            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:00"),
+            ("Beacon-v1.5.0.zip.sig", "https://example.com/Beacon-v1.5.0.zip.sig", nil)
         ]).write(to: feedURL)
 
         let updater = updater(currentVersion: "1.4.0", feedURL: feedURL, in: directory, named: #function)
@@ -66,7 +82,8 @@ struct UpdaterTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let feedURL = directory.appending(path: "latest.json")
         try feed(tag: "v1.5.0", assets: [
-            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:00")
+            ("Beacon-v1.5.0.zip", "https://example.com/Beacon-v1.5.0.zip", "sha256:00"),
+            ("Beacon-v1.5.0.zip.sig", "https://example.com/Beacon-v1.5.0.zip.sig", nil)
         ]).write(to: feedURL)
         let defaults = isolatedDefaults(named: #function)
         defaults.set([LauncherModel.settingsResultID, "command:applications"], forKey: "launcherFavoriteIDs")
@@ -106,7 +123,8 @@ struct UpdaterTests {
             currentVersion: "1.4.0",
             applicationURL: applicationURL,
             bundleIdentifier: Self.bundleIdentifier,
-            latestReleaseURL: feedURL
+            latestReleaseURL: feedURL,
+            signingPublicKey: Self.signingKey.publicKey.rawRepresentation
         )
         var preparedCount = 0
         updater.onUpdatePrepared = { preparedCount += 1 }
@@ -123,14 +141,23 @@ struct UpdaterTests {
     }
 
     @Test @MainActor func updatesThatDoNotMatchTheReleaseAreRejected() async throws {
-        let cases: [(String, applicationVersion: String, bundleIdentifier: String, signature: Signature, digest: String?, UpdateError)] = [
-            ("digest", "1.5.0", Self.bundleIdentifier, .valid, "sha256:00", .damagedArchive),
-            ("version", "1.6.0", Self.bundleIdentifier, .valid, nil, .unexpectedApplication),
-            ("bundle", "1.5.0", "com.example.Other", .valid, nil, .unexpectedApplication),
-            ("unsigned", "1.5.0", Self.bundleIdentifier, .missing, nil, .invalidSignature),
-            ("tampered", "1.5.0", Self.bundleIdentifier, .broken, nil, .invalidSignature)
+        let cases: [(
+            String,
+            applicationVersion: String,
+            bundleIdentifier: String,
+            signature: Signature,
+            digest: String?,
+            releaseKey: Curve25519.Signing.PrivateKey,
+            UpdateError
+        )] = [
+            ("digest", "1.5.0", Self.bundleIdentifier, .valid, "sha256:00", Self.signingKey, .damagedArchive),
+            ("release key", "1.5.0", Self.bundleIdentifier, .valid, nil, Self.otherSigningKey, .untrustedArchive),
+            ("version", "1.6.0", Self.bundleIdentifier, .valid, nil, Self.signingKey, .unexpectedApplication),
+            ("bundle", "1.5.0", "com.example.Other", .valid, nil, Self.signingKey, .unexpectedApplication),
+            ("unsigned", "1.5.0", Self.bundleIdentifier, .missing, nil, Self.signingKey, .invalidSignature),
+            ("tampered", "1.5.0", Self.bundleIdentifier, .broken, nil, Self.signingKey, .invalidSignature)
         ]
-        for (name, applicationVersion, bundleIdentifier, signature, digest, error) in cases {
+        for (name, applicationVersion, bundleIdentifier, signature, digest, releaseKey, error) in cases {
             let directory = try temporaryDirectory()
             defer { try? FileManager.default.removeItem(at: directory) }
             let applicationURL = try makeApplication(version: "1.4.0", in: directory.appending(path: "Installed"))
@@ -140,6 +167,7 @@ struct UpdaterTests {
                 bundleIdentifier: bundleIdentifier,
                 signature: signature,
                 digest: digest,
+                releaseKey: releaseKey,
                 in: directory
             )
             let updater = Updater(
@@ -147,7 +175,8 @@ struct UpdaterTests {
                 currentVersion: "1.4.0",
                 applicationURL: applicationURL,
                 bundleIdentifier: Self.bundleIdentifier,
-                latestReleaseURL: feedURL
+                latestReleaseURL: feedURL,
+                signingPublicKey: Self.signingKey.publicKey.rawRepresentation
             )
 
             await updater.checkForUpdates()
@@ -171,13 +200,15 @@ struct UpdaterTests {
         )
     }
 
-    /// Publishes a release the way the release workflow does: a zipped, ad-hoc signed `Beacon.app` and its digest.
+    /// Publishes a release the way the release workflow does: a zipped, ad-hoc signed `Beacon.app`, its digest,
+    /// and the archive's signature.
     private func publish(
         version: String,
         applicationVersion: String? = nil,
         bundleIdentifier: String = Self.bundleIdentifier,
         signature: Signature = .valid,
         digest: String? = nil,
+        releaseKey: Curve25519.Signing.PrivateKey = Self.signingKey,
         in directory: URL
     ) throws -> URL {
         let releaseURL = directory.appending(path: "Release", directoryHint: .isDirectory)
@@ -190,10 +221,13 @@ struct UpdaterTests {
         let archiveURL = releaseURL.appending(path: "Beacon-v\(version).zip")
         try run("/usr/bin/ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", applicationURL.path, archiveURL.path)
         let archiveDigest = try run("/usr/bin/shasum", "-a", "256", archiveURL.path).prefix(64)
+        let signatureURL = releaseURL.appending(path: "Beacon-v\(version).zip.sig")
+        try releaseKey.signature(for: Data(contentsOf: archiveURL)).write(to: signatureURL)
 
         let feedURL = directory.appending(path: "latest.json")
         try feed(tag: "v\(version)", assets: [
-            (archiveURL.lastPathComponent, archiveURL.absoluteString, digest ?? "sha256:\(archiveDigest)")
+            (archiveURL.lastPathComponent, archiveURL.absoluteString, digest ?? "sha256:\(archiveDigest)"),
+            (signatureURL.lastPathComponent, signatureURL.absoluteString, nil)
         ]).write(to: feedURL)
         return feedURL
     }
